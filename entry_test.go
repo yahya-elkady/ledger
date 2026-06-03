@@ -1,7 +1,7 @@
-package payments_test
+package ledger_test
 
 import (
-    "payments"
+    "github.com/yahya-elkady/ledger"
 
 	"errors"
 	"testing"
@@ -13,11 +13,11 @@ import (
 
 var now = time.Now()
 
-func makeEntry(id, accountID string, amount int64, currency string, dir payments.Direction) payments.Entry {
-	return payments.Entry{
+func makeEntry(id, accountID string, amount int64, currency string, dir ledger.Direction) ledger.Entry {
+	return ledger.Entry{
 		ID:        id,
 		AccountID: accountID,
-		Amount:    payments.MustMoney(amount, currency),
+		Amount:    ledger.MustMoney(amount, currency),
 		Direction: dir,
 		CreatedAt: now,
 	}
@@ -26,10 +26,10 @@ func makeEntry(id, accountID string, amount int64, currency string, dir payments
 // Direction tests
 
 func TestDirection_String(t *testing.T) {
-	if got := payments.Debit.String(); got != "debit" {
+	if got := ledger.Debit.String(); got != "debit" {
 		t.Errorf("Debit.String() = %q, want %q", got, "debit")
 	}
-	if got := payments.Credit.String(); got != "credit" {
+	if got := ledger.Credit.String(); got != "credit" {
 		t.Errorf("Credit.String() = %q, want %q", got, "credit")
 	}
 }
@@ -37,10 +37,10 @@ func TestDirection_String(t *testing.T) {
 func TestDirection_constants(t *testing.T) {
 	// Direction values must be distinct and non-zero so accidental zero-values
 	// are detectable.
-	if payments.Debit == payments.Credit {
+	if ledger.Debit == ledger.Credit {
 		t.Error("Debit and Credit must be distinct values")
 	}
-	if payments.Debit == 0 || payments.Credit == 0 {
+	if ledger.Debit == 0 || ledger.Credit == 0 {
 		t.Error("neither Debit nor Credit should be zero (zero is the unset sentinel)")
 	}
 }
@@ -49,35 +49,35 @@ func TestDirection_constants(t *testing.T) {
 
 func TestEntry_Validate(t *testing.T) {
 	t.Run("valid entry passes", func(t *testing.T) {
-		e := makeEntry("e1", "acct1", 1000, "USD", payments.Debit)
+		e := makeEntry("e1", "acct1", 1000, "USD", ledger.Debit)
 		if err := e.Validate(); err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
 
 	t.Run("missing ID", func(t *testing.T) {
-		e := makeEntry("", "acct1", 1000, "USD", payments.Debit)
+		e := makeEntry("", "acct1", 1000, "USD", ledger.Debit)
 		if err := e.Validate(); err == nil {
 			t.Error("expected error for missing ID")
 		}
 	})
 
 	t.Run("missing account ID", func(t *testing.T) {
-		e := makeEntry("e1", "", 1000, "USD", payments.Debit)
+		e := makeEntry("e1", "", 1000, "USD", ledger.Debit)
 		if err := e.Validate(); err == nil {
 			t.Error("expected error for missing account ID")
 		}
 	})
 
 	t.Run("zero amount", func(t *testing.T) {
-		e := makeEntry("e1", "acct1", 0, "USD", payments.Debit)
+		e := makeEntry("e1", "acct1", 0, "USD", ledger.Debit)
 		if err := e.Validate(); err == nil {
 			t.Error("expected error for zero amount")
 		}
 	})
 
 	t.Run("zero CreatedAt", func(t *testing.T) {
-		e := makeEntry("e1", "acct1", 1000, "USD", payments.Debit)
+		e := makeEntry("e1", "acct1", 1000, "USD", ledger.Debit)
 		e.CreatedAt = time.Time{}
 		if err := e.Validate(); err == nil {
 			t.Error("expected error for zero CreatedAt")
@@ -89,11 +89,11 @@ func TestEntry_Validate(t *testing.T) {
 
 func TestNewEntrySet_balanced(t *testing.T) {
 	t.Run("simple balanced pair", func(t *testing.T) {
-		entries := []payments.Entry{
-			makeEntry("e1", "cash", 1000, "USD", payments.Debit),
-			makeEntry("e2", "revenue", 1000, "USD", payments.Credit),
+		entries := []ledger.Entry{
+			makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
+			makeEntry("e2", "revenue", 1000, "USD", ledger.Credit),
 		}
-		_, err := payments.NewEntrySet(entries)
+		_, err := ledger.NewEntrySet(entries)
 		if err != nil {
 			t.Errorf("unexpected error for balanced set: %v", err)
 		}
@@ -101,12 +101,12 @@ func TestNewEntrySet_balanced(t *testing.T) {
 
 	t.Run("multi-leg balanced set", func(t *testing.T) {
 		// One debit of 1000, two credits of 400 and 600.
-		entries := []payments.Entry{
-			makeEntry("e1", "cash", 1000, "USD", payments.Debit),
-			makeEntry("e2", "revenue", 400, "USD", payments.Credit),
-			makeEntry("e3", "tax-payable", 600, "USD", payments.Credit),
+		entries := []ledger.Entry{
+			makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
+			makeEntry("e2", "revenue", 400, "USD", ledger.Credit),
+			makeEntry("e3", "tax-payable", 600, "USD", ledger.Credit),
 		}
-		_, err := payments.NewEntrySet(entries)
+		_, err := ledger.NewEntrySet(entries)
 		if err != nil {
 			t.Errorf("unexpected error for balanced multi-leg set: %v", err)
 		}
@@ -114,50 +114,50 @@ func TestNewEntrySet_balanced(t *testing.T) {
 }
 
 func TestNewEntrySet_unbalanced(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("e1", "cash", 1000, "USD", payments.Debit),
-		makeEntry("e2", "revenue", 999, "USD", payments.Credit), // off by 1
+	entries := []ledger.Entry{
+		makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
+		makeEntry("e2", "revenue", 999, "USD", ledger.Credit), // off by 1
 	}
-	_, err := payments.NewEntrySet(entries)
+	_, err := ledger.NewEntrySet(entries)
 	if err == nil {
 		t.Error("expected error for unbalanced entry set, got nil")
 	}
 }
 
 func TestNewEntrySet_single_entry_rejected(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("e1", "cash", 1000, "USD", payments.Debit),
+	entries := []ledger.Entry{
+		makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
 	}
-	_, err := payments.NewEntrySet(entries)
+	_, err := ledger.NewEntrySet(entries)
 	if err == nil {
 		t.Error("expected error for single-entry set, got nil")
 	}
 }
 
 func TestNewEntrySet_empty_rejected(t *testing.T) {
-	_, err := payments.NewEntrySet([]payments.Entry{})
+	_, err := ledger.NewEntrySet([]ledger.Entry{})
 	if err == nil {
 		t.Error("expected error for empty entry set, got nil")
 	}
 }
 
 func TestNewEntrySet_mixed_currencies_rejected(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("e1", "cash", 1000, "USD", payments.Debit),
-		makeEntry("e2", "revenue", 1000, "EUR", payments.Credit),
+	entries := []ledger.Entry{
+		makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
+		makeEntry("e2", "revenue", 1000, "EUR", ledger.Credit),
 	}
-	_, err := payments.NewEntrySet(entries)
+	_, err := ledger.NewEntrySet(entries)
 	if err == nil {
 		t.Error("expected error for mixed-currency entry set, got nil")
 	}
 }
 
 func TestNewEntrySet_invalid_entry_propagates(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("", "cash", 1000, "USD", payments.Debit), // missing ID
-		makeEntry("e2", "revenue", 1000, "USD", payments.Credit),
+	entries := []ledger.Entry{
+		makeEntry("", "cash", 1000, "USD", ledger.Debit), // missing ID
+		makeEntry("e2", "revenue", 1000, "USD", ledger.Credit),
 	}
-	_, err := payments.NewEntrySet(entries)
+	_, err := ledger.NewEntrySet(entries)
 	if err == nil {
 		t.Error("expected error for invalid entry, got nil")
 	}
@@ -166,12 +166,12 @@ func TestNewEntrySet_invalid_entry_propagates(t *testing.T) {
 // TotalDebits / TotalCredits tests
 
 func TestEntrySet_Totals(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("e1", "cash", 700, "USD", payments.Debit),
-		makeEntry("e2", "ar", 300, "USD", payments.Debit),
-		makeEntry("e3", "revenue", 1000, "USD", payments.Credit),
+	entries := []ledger.Entry{
+		makeEntry("e1", "cash", 700, "USD", ledger.Debit),
+		makeEntry("e2", "ar", 300, "USD", ledger.Debit),
+		makeEntry("e3", "revenue", 1000, "USD", ledger.Credit),
 	}
-	es, err := payments.NewEntrySet(entries)
+	es, err := ledger.NewEntrySet(entries)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,11 +196,11 @@ func TestEntrySet_Totals(t *testing.T) {
 // Entries immutability test
 
 func TestEntrySet_Entries_returns_copy(t *testing.T) {
-	entries := []payments.Entry{
-		makeEntry("e1", "cash", 1000, "USD", payments.Debit),
-		makeEntry("e2", "revenue", 1000, "USD", payments.Credit),
+	entries := []ledger.Entry{
+		makeEntry("e1", "cash", 1000, "USD", ledger.Debit),
+		makeEntry("e2", "revenue", 1000, "USD", ledger.Credit),
 	}
-	es, err := payments.NewEntrySet(entries)
+	es, err := ledger.NewEntrySet(entries)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,14 +218,14 @@ func TestEntrySet_Entries_returns_copy(t *testing.T) {
 
 func TestAccountType_NormalBalance(t *testing.T) {
 	cases := []struct {
-		t    payments.AccountType
-		want payments.Direction
+		t    ledger.AccountType
+		want ledger.Direction
 	}{
-		{payments.AccountTypeAsset, payments.Debit},
-		{payments.AccountTypeExpense, payments.Debit},
-		{payments.AccountTypeLiability, payments.Credit},
-		{payments.AccountTypeEquity, payments.Credit},
-		{payments.AccountTypeRevenue, payments.Credit},
+		{ledger.AccountTypeAsset, ledger.Debit},
+		{ledger.AccountTypeExpense, ledger.Debit},
+		{ledger.AccountTypeLiability, ledger.Credit},
+		{ledger.AccountTypeEquity, ledger.Credit},
+		{ledger.AccountTypeRevenue, ledger.Credit},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.t), func(t *testing.T) {
@@ -238,11 +238,11 @@ func TestAccountType_NormalBalance(t *testing.T) {
 }
 
 func TestAccount_Validate(t *testing.T) {
-	valid := payments.Account{
+	valid := ledger.Account{
 		ID:       "acct-1",
 		Name:     "Cash",
 		Currency: "USD",
-		Type:     payments.AccountTypeAsset,
+		Type:     ledger.AccountTypeAsset,
 	}
 
 	t.Run("valid account passes", func(t *testing.T) {
@@ -277,14 +277,14 @@ func TestAccount_Validate(t *testing.T) {
 
 	t.Run("unknown AccountType", func(t *testing.T) {
 		a := valid
-		a.Type = payments.AccountType("bogus")
+		a.Type = ledger.AccountType("bogus")
 		if err := a.Validate(); err == nil {
 			t.Error("expected error for unknown account type")
 		}
 	})
 
 	t.Run("multiple errors joined", func(t *testing.T) {
-		a := payments.Account{} // everything missing
+		a := ledger.Account{} // everything missing
 		err := a.Validate()
 		if err == nil {
 			t.Fatal("expected errors, got nil")
