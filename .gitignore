@@ -1,0 +1,24 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Build output
+*.exe
+*.exe~
+/bin/
+/dist/
+
+# Go
+*.o
+*.a
+*.so
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,7 +1,7 @@
 package ledger_test
 
 import (
-    "github.com/yahya-elkady/ledger"
+    "github.com/yahya-elkady/ledger/internal/ledger"
 
 	"errors"
 	"testing"
