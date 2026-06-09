@@ -101,6 +101,46 @@ func (s *AuthStore) SaveAPIKey(ctx context.Context, rec APIKeyRecord) (*APIKeyRe
 	return apiKeyRowToRecord(row), nil
 }
 
+// ListAPIKeysByMerchant returns a merchant's active (non-revoked) API keys,
+// newest first.
+func (s *AuthStore) ListAPIKeysByMerchant(ctx context.Context, merchantID string) ([]*APIKeyRecord, error) {
+	mid, err := textToUUID(merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid merchant id: %w", err)
+	}
+	rows, err := s.queries.ListAPIKeysByMerchant(ctx, mid)
+	if err != nil {
+		return nil, fmt.Errorf("listing api keys: %w", err)
+	}
+	out := make([]*APIKeyRecord, len(rows))
+	for i, row := range rows {
+		out[i] = apiKeyRowToRecord(row)
+	}
+	return out, nil
+}
+
+// GetAPIKeyByID loads a single API key by id, scoped to the owning merchant.
+// Returns ErrAPIKeyNotFound if absent or owned by another merchant.
+func (s *AuthStore) GetAPIKeyByID(ctx context.Context, id, merchantID string) (*APIKeyRecord, error) {
+	kid, err := textToUUID(id)
+	if err != nil {
+		return nil, ErrAPIKeyNotFound
+	}
+	row, err := s.queries.GetAPIKeyByID(ctx, kid)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrAPIKeyNotFound
+		}
+		return nil, fmt.Errorf("getting api key by id: %w", err)
+	}
+	rec := apiKeyRowToRecord(row)
+	if rec.MerchantID != merchantID {
+		// Don't leak the existence of another merchant's key.
+		return nil, ErrAPIKeyNotFound
+	}
+	return rec, nil
+}
+
 // GetAPIKeyByHash loads an API key by its HMAC hash. Returns ErrAPIKeyNotFound
 // if absent.
 func (s *AuthStore) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error) {
