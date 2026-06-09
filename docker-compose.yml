@@ -1,0 +1,66 @@
+# Local development stack: the Go API, PostgreSQL, and Redis.
+# All secrets are read from the host environment / .env — none are hardcoded.
+# Copy .env.example to .env before running `docker compose up`.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # App connects as the least-privilege payments_app role, never superuser.
+      DATABASE_URL: postgres://payments_app:${PAYMENTS_APP_PASSWORD:-app_password}@postgres:5432/payments?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      PORT: "8080"
+      ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      API_KEY_HMAC_SECRET: ${API_KEY_HMAC_SECRET}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET}
+    ports:
+      - "8080:8080"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: payments
+      # Superuser credentials are used ONLY by the init script to provision the
+      # restricted roles below; the app itself never connects as this user.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
+      # Passwords for the provisioned roles, consumed by init-roles.sql.
+      PAYMENTS_APP_PASSWORD: ${PAYMENTS_APP_PASSWORD:-app_password}
+      PAYMENTS_MIGRATIONS_PASSWORD: ${PAYMENTS_MIGRATIONS_PASSWORD:-migrations_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once on first init to create least-privilege roles.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payments"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # No persistence needed: rate-limit / idempotency state is acceptable to
+    # lose on restart.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
