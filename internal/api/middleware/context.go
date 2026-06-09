@@ -15,6 +15,7 @@ const (
 	modeKey
 	scopeKey
 	principalKey
+	apiKeyIDKey
 )
 
 // PrincipalType identifies how a request was authenticated.
@@ -56,4 +57,16 @@ func Scope(ctx context.Context) []string {
 func Principal(ctx context.Context) PrincipalType {
 	p, _ := ctx.Value(principalKey).(PrincipalType)
 	return p
+}
+
+// withAPIKeyID attaches the authenticating API key's id, used as the rate-limit
+// subject for machine clients.
+func withAPIKeyID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, apiKeyIDKey, id)
+}
+
+// APIKeyID returns the authenticating API key's id, or "" for JWT/unauthenticated.
+func APIKeyID(ctx context.Context) string {
+	id, _ := ctx.Value(apiKeyIDKey).(string)
+	return id
 }

@@ -73,6 +73,7 @@ func (a *Authenticator) APIKeyMiddleware(next http.Handler) http.Handler {
 		}
 
 		ctx := withAuth(r.Context(), rec.MerchantID, rec.Mode, rec.Scope, PrincipalAPIKey)
+		ctx = withAPIKeyID(ctx, rec.ID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
