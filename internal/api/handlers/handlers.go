@@ -16,7 +16,9 @@ import (
 	"github.com/yahya-elkady/ledger/internal/api/respond"
 	"github.com/yahya-elkady/ledger/internal/auth"
 	"github.com/yahya-elkady/ledger/internal/models"
+	"github.com/yahya-elkady/ledger/internal/processor"
 	"github.com/yahya-elkady/ledger/internal/store"
+	"github.com/yahya-elkady/ledger/internal/webhook"
 )
 
 // listResponse is the envelope for paginated/collection endpoints.
@@ -56,41 +58,124 @@ type CustomerStore interface {
 	SoftDeleteCustomer(ctx context.Context, id, merchantID string) error
 }
 
+// ChargeStore is the charge persistence the handlers need.
+type ChargeStore interface {
+	CreateCharge(ctx context.Context, c store.NewCharge) (*models.Charge, error)
+	GetCharge(ctx context.Context, id, merchantID, mode string) (*models.Charge, error)
+	ListCharges(ctx context.Context, merchantID, mode string, f store.ChargeFilter) ([]*models.Charge, string, error)
+	SetRefund(ctx context.Context, id, merchantID string, refundedAmount int64, status string) (*models.Charge, error)
+	UpdateStatusByProcessorID(ctx context.Context, processorChargeID, status, failureCode, failureMessage string) (*models.Charge, error)
+}
+
+// PlanStore is the plan persistence the handlers need.
+type PlanStore interface {
+	CreatePlan(ctx context.Context, p store.NewPlan) (*models.Plan, error)
+	ListPlans(ctx context.Context, merchantID, mode string) ([]*models.Plan, error)
+	GetPlan(ctx context.Context, id, merchantID, mode string) (*models.Plan, error)
+	SoftDeletePlan(ctx context.Context, id, merchantID string) error
+}
+
+// SubscriptionStore is the subscription persistence the handlers need.
+type SubscriptionStore interface {
+	CreateSubscription(ctx context.Context, s store.NewSubscription) (*models.Subscription, error)
+	GetSubscription(ctx context.Context, id, merchantID, mode string) (*models.Subscription, error)
+	ListSubscriptions(ctx context.Context, merchantID, mode string, f store.SubscriptionFilter) ([]*models.Subscription, string, error)
+	SetSubscriptionStatus(ctx context.Context, id, merchantID, status string, canceledAt bool) (*models.Subscription, error)
+	UpdateStatusByProcessorID(ctx context.Context, processorSubID, status string) (*models.Subscription, error)
+}
+
+// BankAccountStore is the bank-account persistence the handlers need.
+type BankAccountStore interface {
+	CreateBankAccount(ctx context.Context, b store.NewBankAccount) (*models.BankAccount, error)
+	ListBankAccounts(ctx context.Context, merchantID string) ([]*models.BankAccount, error)
+	SoftDeleteBankAccount(ctx context.Context, id, merchantID string) error
+}
+
+// PayoutStore is the payout persistence the handlers need.
+type PayoutStore interface {
+	CreatePayout(ctx context.Context, p store.NewPayout) (*models.Payout, error)
+	GetPayout(ctx context.Context, id, merchantID, mode string) (*models.Payout, error)
+	ListPayouts(ctx context.Context, merchantID, mode string, limit int, cursor string) ([]*models.Payout, string, error)
+	UpdateStatusByProcessorID(ctx context.Context, processorPayoutID, status, failureMessage string) (*models.Payout, error)
+}
+
+// DashboardStore provides the aggregates the dashboard renders.
+type DashboardStore interface {
+	ChargeStats(ctx context.Context, merchantID, mode string) (store.ChargeStats, error)
+	CountActiveSubscriptions(ctx context.Context, merchantID, mode string) (int64, error)
+	CountPendingPayouts(ctx context.Context, merchantID, mode string) (int64, error)
+	RecentFailedCharges(ctx context.Context, merchantID, mode string, limit int) ([]*models.Charge, error)
+}
+
 // AuditLogger records mutations to the append-only audit log.
 type AuditLogger interface {
 	WriteAuditLog(ctx context.Context, e store.AuditEntry) error
 }
 
-// Handlers bundles the dependencies shared by all HTTP handlers.
+// Handlers bundles the dependencies shared by all HTTP handlers. Store
+// dependencies are interfaces (see Deps) so handlers unit-test with fakes.
 type Handlers struct {
-	merchants MerchantStore
-	apiKeys   APIKeyStore
-	tokens    RefreshTokenStore
-	customers CustomerStore
-	audit     AuditLogger
-	jwt       *auth.JWTManager
-	hasher    *auth.APIKeyHasher
-	accessTTL time.Duration
+	merchants     MerchantStore
+	apiKeys       APIKeyStore
+	tokens        RefreshTokenStore
+	customers     CustomerStore
+	charges       ChargeStore
+	plans         PlanStore
+	subscriptions SubscriptionStore
+	bankAccounts  BankAccountStore
+	payouts       PayoutStore
+	dashboard     DashboardStore
+	audit         AuditLogger
+	processor     processor.Processor
+	stripeWebhook webhook.Verifier
+	plaidWebhook  webhook.Verifier
+	jwt           *auth.JWTManager
+	hasher        *auth.APIKeyHasher
+	accessTTL     time.Duration
 }
 
-// Config carries the non-store dependencies and tunables for the handlers.
-type Config struct {
-	JWT       *auth.JWTManager
-	Hasher    *auth.APIKeyHasher
-	AccessTTL time.Duration
+// Deps is the full set of handler dependencies, passed to New. Fields may be nil
+// in tests that only exercise a subset of handlers.
+type Deps struct {
+	Merchants     MerchantStore
+	APIKeys       APIKeyStore
+	Tokens        RefreshTokenStore
+	Customers     CustomerStore
+	Charges       ChargeStore
+	Plans         PlanStore
+	Subscriptions SubscriptionStore
+	BankAccounts  BankAccountStore
+	Payouts       PayoutStore
+	Dashboard     DashboardStore
+	Audit         AuditLogger
+	Processor     processor.Processor
+	StripeWebhook webhook.Verifier
+	PlaidWebhook  webhook.Verifier
+	JWT           *auth.JWTManager
+	Hasher        *auth.APIKeyHasher
+	AccessTTL     time.Duration
 }
 
 // New constructs the Handlers from its dependencies.
-func New(merchants MerchantStore, apiKeys APIKeyStore, tokens RefreshTokenStore, customers CustomerStore, audit AuditLogger, cfg Config) *Handlers {
+func New(d Deps) *Handlers {
 	return &Handlers{
-		merchants: merchants,
-		apiKeys:   apiKeys,
-		tokens:    tokens,
-		customers: customers,
-		audit:     audit,
-		jwt:       cfg.JWT,
-		hasher:    cfg.Hasher,
-		accessTTL: cfg.AccessTTL,
+		merchants:     d.Merchants,
+		apiKeys:       d.APIKeys,
+		tokens:        d.Tokens,
+		customers:     d.Customers,
+		charges:       d.Charges,
+		plans:         d.Plans,
+		subscriptions: d.Subscriptions,
+		bankAccounts:  d.BankAccounts,
+		payouts:       d.Payouts,
+		dashboard:     d.Dashboard,
+		audit:         d.Audit,
+		processor:     d.Processor,
+		stripeWebhook: d.StripeWebhook,
+		plaidWebhook:  d.PlaidWebhook,
+		jwt:           d.JWT,
+		hasher:        d.Hasher,
+		accessTTL:     d.AccessTTL,
 	}
 }
 
@@ -136,4 +221,19 @@ func respondNotFoundOr500(w http.ResponseWriter, r *http.Request, err, notFound 
 		return
 	}
 	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
+}
+
+// auditMutation records a mutation against the authenticated principal. It never
+// blocks the primary operation (errors are swallowed by writeAudit).
+func (h *Handlers) auditMutation(r *http.Request, action, resource, resourceID string) {
+	actorType, actorID := auditActor(r.Context())
+	h.writeAudit(r, store.AuditEntry{
+		MerchantID: middleware.MerchantID(r.Context()),
+		ActorType:  actorType,
+		ActorID:    actorID,
+		Action:     action,
+		Resource:   resource,
+		ResourceID: resourceID,
+		IP:         clientIP(r),
+	})
 }

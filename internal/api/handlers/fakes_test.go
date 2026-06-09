@@ -11,11 +11,11 @@ import (
 
 // fakeMerchants is an in-memory MerchantStore.
 type fakeMerchants struct {
-	mu       sync.Mutex
-	byEmail  map[string]*models.Merchant
-	byID     map[string]*models.Merchant
-	hashes   map[string]string // email -> password hash
-	seq      int
+	mu      sync.Mutex
+	byEmail map[string]*models.Merchant
+	byID    map[string]*models.Merchant
+	hashes  map[string]string // email -> password hash
+	seq     int
 }
 
 func newFakeMerchants() *fakeMerchants {
@@ -239,6 +239,103 @@ func (f *fakeCustomers) SoftDeleteCustomer(_ context.Context, id, merchantID str
 	}
 	delete(f.byID, id)
 	return nil
+}
+
+// fakeCharges is an in-memory ChargeStore.
+type fakeCharges struct {
+	mu     sync.Mutex
+	byID   map[string]*models.Charge
+	byIdem map[string]bool
+	seq    int
+}
+
+func newFakeCharges() *fakeCharges {
+	return &fakeCharges{byID: map[string]*models.Charge{}, byIdem: map[string]bool{}}
+}
+
+func (f *fakeCharges) CreateCharge(_ context.Context, c store.NewCharge) (*models.Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c.IdempotencyKey != "" && f.byIdem[c.IdempotencyKey] {
+		return nil, store.ErrIdempotencyConflict
+	}
+	f.seq++
+	m := &models.Charge{
+		ID:                "44444444-4444-4444-4444-" + pad12(f.seq),
+		MerchantID:        c.MerchantID,
+		CustomerID:        c.CustomerID,
+		PaymentMethodID:   c.PaymentMethodID,
+		Amount:            c.Amount,
+		Currency:          c.Currency,
+		Status:            c.Status,
+		Processor:         c.Processor,
+		ProcessorChargeID: c.ProcessorChargeID,
+		Mode:              c.Mode,
+		FailureCode:       c.FailureCode,
+		FailureMessage:    c.FailureMessage,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	f.byID[m.ID] = m
+	if c.IdempotencyKey != "" {
+		f.byIdem[c.IdempotencyKey] = true
+	}
+	return m, nil
+}
+
+func (f *fakeCharges) GetCharge(_ context.Context, id, merchantID, mode string) (*models.Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.byID[id]
+	if !ok || c.MerchantID != merchantID || c.Mode != mode {
+		return nil, store.ErrChargeNotFound
+	}
+	cp := *c
+	return &cp, nil
+}
+
+func (f *fakeCharges) ListCharges(_ context.Context, merchantID, mode string, filter store.ChargeFilter) ([]*models.Charge, string, error) {
+	if filter.Cursor == "bad" {
+		return nil, "", store.ErrInvalidCursor
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*models.Charge
+	for _, c := range f.byID {
+		if c.MerchantID == merchantID && c.Mode == mode {
+			if filter.Status != "" && c.Status != filter.Status {
+				continue
+			}
+			cp := *c
+			out = append(out, &cp)
+		}
+	}
+	return out, "", nil
+}
+
+func (f *fakeCharges) SetRefund(_ context.Context, id, merchantID string, refundedAmount int64, status string) (*models.Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.byID[id]
+	if !ok || c.MerchantID != merchantID {
+		return nil, store.ErrChargeNotFound
+	}
+	c.RefundedAmount, c.Status, c.UpdatedAt = refundedAmount, status, time.Now()
+	cp := *c
+	return &cp, nil
+}
+
+func (f *fakeCharges) UpdateStatusByProcessorID(_ context.Context, processorChargeID, status, failureCode, failureMessage string) (*models.Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.byID {
+		if c.ProcessorChargeID == processorChargeID {
+			c.Status, c.FailureCode, c.FailureMessage = status, failureCode, failureMessage
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrChargeNotFound
 }
 
 // fakeAudit records audit entries in memory.

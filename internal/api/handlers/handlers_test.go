@@ -14,6 +14,8 @@ import (
 	"github.com/yahya-elkady/ledger/internal/api/handlers"
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/auth"
+	"github.com/yahya-elkady/ledger/internal/processor"
+	"github.com/yahya-elkady/ledger/internal/webhook"
 )
 
 const (
@@ -23,13 +25,21 @@ const (
 )
 
 type harness struct {
-	h         *handlers.Handlers
-	merchants *fakeMerchants
-	apiKeys   *fakeAPIKeys
-	tokens    *fakeTokens
-	customers *fakeCustomers
-	audit     *fakeAudit
-	jwt       *auth.JWTManager
+	h             *handlers.Handlers
+	merchants     *fakeMerchants
+	apiKeys       *fakeAPIKeys
+	tokens        *fakeTokens
+	customers     *fakeCustomers
+	charges       *fakeCharges
+	plans         *fakePlans
+	subscriptions *fakeSubscriptions
+	bankAccounts  *fakeBankAccounts
+	payouts       *fakePayouts
+	dashboard     *fakeDashboard
+	audit         *fakeAudit
+	processor     *processor.Fake
+	stripeHook    *webhook.Fake
+	jwt           *auth.JWTManager
 }
 
 func newHarness(t *testing.T) *harness {
@@ -43,12 +53,37 @@ func newHarness(t *testing.T) *harness {
 	tk := newFakeTokens()
 	cu := newFakeCustomers()
 	au := &fakeAudit{}
-	h := handlers.New(m, ak, tk, cu, au, handlers.Config{
-		JWT:       jwtMgr,
-		Hasher:    auth.NewAPIKeyHasher(hmacSecret),
-		AccessTTL: 15 * time.Minute,
+	proc := &processor.Fake{}
+	ch := newFakeCharges()
+	pl := newFakePlans()
+	sub := newFakeSubscriptions()
+	ba := newFakeBankAccounts()
+	po := newFakePayouts()
+	dash := &fakeDashboard{}
+	hook := &webhook.Fake{}
+	h := handlers.New(handlers.Deps{
+		Merchants:     m,
+		APIKeys:       ak,
+		Tokens:        tk,
+		Customers:     cu,
+		Charges:       ch,
+		Plans:         pl,
+		Subscriptions: sub,
+		BankAccounts:  ba,
+		Payouts:       po,
+		Dashboard:     dash,
+		Audit:         au,
+		Processor:     proc,
+		StripeWebhook: hook,
+		JWT:           jwtMgr,
+		Hasher:        auth.NewAPIKeyHasher(hmacSecret),
+		AccessTTL:     15 * time.Minute,
 	})
-	return &harness{h: h, merchants: m, apiKeys: ak, tokens: tk, customers: cu, audit: au, jwt: jwtMgr}
+	return &harness{
+		h: h, merchants: m, apiKeys: ak, tokens: tk, customers: cu, charges: ch,
+		plans: pl, subscriptions: sub, bankAccounts: ba, payouts: po, dashboard: dash,
+		audit: au, processor: proc, stripeHook: hook, jwt: jwtMgr,
+	}
 }
 
 // req builds a request carrying a dashboard (JWT) principal for merchantID, by
