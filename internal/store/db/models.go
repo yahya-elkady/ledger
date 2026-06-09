@@ -5,6 +5,8 @@
 package db
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -14,6 +16,79 @@ type Account struct {
 	Currency  string             `json:"currency"`
 	Type      string             `json:"type"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type ApiKey struct {
+	ID         pgtype.UUID        `json:"id"`
+	MerchantID pgtype.UUID        `json:"merchant_id"`
+	Name       string             `json:"name"`
+	KeyHash    string             `json:"key_hash"`
+	KeyPrefix  string             `json:"key_prefix"`
+	Type       string             `json:"type"`
+	Mode       string             `json:"mode"`
+	Scope      []string           `json:"scope"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type AuditLog struct {
+	ID         pgtype.UUID        `json:"id"`
+	MerchantID pgtype.UUID        `json:"merchant_id"`
+	ActorType  string             `json:"actor_type"`
+	ActorID    string             `json:"actor_id"`
+	Action     string             `json:"action"`
+	Resource   string             `json:"resource"`
+	ResourceID pgtype.UUID        `json:"resource_id"`
+	Diff       []byte             `json:"diff"`
+	IpAddress  *netip.Addr        `json:"ip_address"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type BankAccount struct {
+	ID              pgtype.UUID        `json:"id"`
+	MerchantID      pgtype.UUID        `json:"merchant_id"`
+	Processor       string             `json:"processor"`
+	ProcessorAcctID string             `json:"processor_acct_id"`
+	Last4           *string            `json:"last4"`
+	BankName        *string            `json:"bank_name"`
+	Currency        *string            `json:"currency"`
+	IsDefault       bool               `json:"is_default"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type Charge struct {
+	ID                pgtype.UUID        `json:"id"`
+	MerchantID        pgtype.UUID        `json:"merchant_id"`
+	CustomerID        pgtype.UUID        `json:"customer_id"`
+	PaymentMethodID   pgtype.UUID        `json:"payment_method_id"`
+	Amount            int64              `json:"amount"`
+	Currency          string             `json:"currency"`
+	Status            string             `json:"status"`
+	Processor         string             `json:"processor"`
+	ProcessorChargeID *string            `json:"processor_charge_id"`
+	IdempotencyKey    *string            `json:"idempotency_key"`
+	Mode              string             `json:"mode"`
+	FailureCode       *string            `json:"failure_code"`
+	FailureMessage    *string            `json:"failure_message"`
+	RefundedAmount    int64              `json:"refunded_amount"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type Customer struct {
+	ID         pgtype.UUID        `json:"id"`
+	MerchantID pgtype.UUID        `json:"merchant_id"`
+	Email      *string            `json:"email"`
+	Name       *string            `json:"name"`
+	Metadata   []byte             `json:"metadata"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type Entry struct {
@@ -27,6 +102,17 @@ type Entry struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type Merchant struct {
+	ID           pgtype.UUID        `json:"id"`
+	Email        string             `json:"email"`
+	PasswordHash string             `json:"password_hash"`
+	BusinessName string             `json:"business_name"`
+	Mode         string             `json:"mode"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+}
+
 type Payment struct {
 	ID             string             `json:"id"`
 	Amount         int64              `json:"amount"`
@@ -36,4 +122,108 @@ type Payment struct {
 	ProviderRef    string             `json:"provider_ref"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PaymentMethod struct {
+	ID                pgtype.UUID        `json:"id"`
+	CustomerID        pgtype.UUID        `json:"customer_id"`
+	MerchantID        pgtype.UUID        `json:"merchant_id"`
+	Type              string             `json:"type"`
+	Processor         string             `json:"processor"`
+	ProcessorMethodID string             `json:"processor_method_id"`
+	Last4             *string            `json:"last4"`
+	Brand             *string            `json:"brand"`
+	ExpMonth          *int16             `json:"exp_month"`
+	ExpYear           *int16             `json:"exp_year"`
+	Currency          *string            `json:"currency"`
+	IsDefault         bool               `json:"is_default"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type Payout struct {
+	ID                pgtype.UUID        `json:"id"`
+	MerchantID        pgtype.UUID        `json:"merchant_id"`
+	BankAccountID     pgtype.UUID        `json:"bank_account_id"`
+	Amount            int64              `json:"amount"`
+	Currency          string             `json:"currency"`
+	Status            string             `json:"status"`
+	Processor         string             `json:"processor"`
+	ProcessorPayoutID *string            `json:"processor_payout_id"`
+	IdempotencyKey    *string            `json:"idempotency_key"`
+	Mode              string             `json:"mode"`
+	FailureMessage    *string            `json:"failure_message"`
+	ArrivalDate       pgtype.Date        `json:"arrival_date"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type Plan struct {
+	ID              pgtype.UUID        `json:"id"`
+	MerchantID      pgtype.UUID        `json:"merchant_id"`
+	Name            string             `json:"name"`
+	Amount          int64              `json:"amount"`
+	Currency        string             `json:"currency"`
+	Interval        string             `json:"interval"`
+	IntervalCount   int16              `json:"interval_count"`
+	ProcessorPlanID *string            `json:"processor_plan_id"`
+	Mode            string             `json:"mode"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type RefreshToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	MerchantID pgtype.UUID        `json:"merchant_id"`
+	TokenHash  string             `json:"token_hash"`
+	Jti        string             `json:"jti"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type Subscription struct {
+	ID                 pgtype.UUID        `json:"id"`
+	MerchantID         pgtype.UUID        `json:"merchant_id"`
+	CustomerID         pgtype.UUID        `json:"customer_id"`
+	PlanID             pgtype.UUID        `json:"plan_id"`
+	PaymentMethodID    pgtype.UUID        `json:"payment_method_id"`
+	Status             string             `json:"status"`
+	ProcessorSubID     *string            `json:"processor_sub_id"`
+	CurrentPeriodStart pgtype.Timestamptz `json:"current_period_start"`
+	CurrentPeriodEnd   pgtype.Timestamptz `json:"current_period_end"`
+	TrialEnd           pgtype.Timestamptz `json:"trial_end"`
+	CanceledAt         pgtype.Timestamptz `json:"canceled_at"`
+	Mode               string             `json:"mode"`
+	Metadata           []byte             `json:"metadata"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type WebhookDelivery struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EndpointID         pgtype.UUID        `json:"endpoint_id"`
+	EventType          string             `json:"event_type"`
+	Payload            []byte             `json:"payload"`
+	Status             string             `json:"status"`
+	AttemptCount       int16              `json:"attempt_count"`
+	NextRetryAt        pgtype.Timestamptz `json:"next_retry_at"`
+	LastResponseStatus *int32             `json:"last_response_status"`
+	LastResponseBody   *string            `json:"last_response_body"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WebhookEndpoint struct {
+	ID                pgtype.UUID        `json:"id"`
+	MerchantID        pgtype.UUID        `json:"merchant_id"`
+	Url               string             `json:"url"`
+	Events            []string           `json:"events"`
+	SigningSecretHash string             `json:"signing_secret_hash"`
+	Mode              string             `json:"mode"`
+	IsActive          bool               `json:"is_active"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
 }
