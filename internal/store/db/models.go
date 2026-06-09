@@ -26,3 +26,14 @@ type Entry struct {
 	TransactionID string             `json:"transaction_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
+
+type Payment struct {
+	ID             string             `json:"id"`
+	Amount         int64              `json:"amount"`
+	Currency       string             `json:"currency"`
+	Status         string             `json:"status"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	ProviderRef    string             `json:"provider_ref"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
