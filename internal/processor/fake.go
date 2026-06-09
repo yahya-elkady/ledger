@@ -53,7 +53,7 @@ func (f *Fake) CreateCharge(_ context.Context, req ChargeRequest) (ChargeResult,
 }
 
 // RefundCharge returns a succeeded refund or an error (RefundErr).
-func (f *Fake) RefundCharge(_ context.Context, _ string, _ int64, _ string) (RefundResult, error) {
+func (f *Fake) RefundCharge(_ context.Context, _, _ string, _ int64, _ string) (RefundResult, error) {
 	atomic.AddInt32(&f.RefundCalls, 1)
 	if f.RefundErr != nil {
 		return RefundResult{}, f.RefundErr

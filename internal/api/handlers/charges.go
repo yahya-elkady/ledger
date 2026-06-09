@@ -51,6 +51,7 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 
 	// Ask the processor to take the payment.
 	result, err := h.processor.CreateCharge(r.Context(), processor.ChargeRequest{
+		Processor:         req.Processor,
 		Amount:            req.Amount,
 		Currency:          req.Currency,
 		Mode:              mode,
@@ -153,7 +154,7 @@ func (h *Handlers) RefundCharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.processor.RefundCharge(r.Context(), charge.ProcessorChargeID, amount, mode); err != nil {
+	if _, err := h.processor.RefundCharge(r.Context(), charge.Processor, charge.ProcessorChargeID, amount, mode); err != nil {
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}

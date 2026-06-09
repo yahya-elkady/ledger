@@ -28,7 +28,8 @@ var ErrDeclined = errors.New("processor declined")
 
 // ChargeRequest asks a processor to take a one-time payment.
 type ChargeRequest struct {
-	Amount            int64 // minor units (cents)
+	Processor         string // "stripe" | "plaid" — routes the call (Mux)
+	Amount            int64  // minor units (cents)
 	Currency          string
 	Mode              string // test | live
 	ProcessorMethodID string // tokenized payment method at the processor
@@ -55,7 +56,9 @@ type RefundResult struct {
 // passed through this interface — only a ProcessorMethodID token.
 type ChargeProcessor interface {
 	CreateCharge(ctx context.Context, req ChargeRequest) (ChargeResult, error)
-	RefundCharge(ctx context.Context, processorChargeID string, amount int64, mode string) (RefundResult, error)
+	// RefundCharge takes processorName so a Mux can route the refund back to the
+	// processor that created the charge.
+	RefundCharge(ctx context.Context, processorName, processorChargeID string, amount int64, mode string) (RefundResult, error)
 }
 
 // PlanRequest creates a recurring price/plan at the processor.
@@ -94,6 +97,7 @@ type SubscriptionProcessor interface {
 
 // PayoutRequest moves funds to a merchant bank account.
 type PayoutRequest struct {
+	Processor       string // "stripe" | "plaid" — routes the call (Mux)
 	Amount          int64
 	Currency        string
 	Mode            string
@@ -112,8 +116,15 @@ type PayoutProcessor interface {
 	CreatePayout(ctx context.Context, req PayoutRequest) (PayoutResult, error)
 }
 
-// Processor is the union of all processor capabilities, satisfied by the
-// per-vendor adapters and by the test fake.
+// ChargePayoutProcessor is the subset a non-recurring vendor (e.g. Plaid ACH)
+// implements: one-time charges and payouts, but no subscriptions.
+type ChargePayoutProcessor interface {
+	ChargeProcessor
+	PayoutProcessor
+}
+
+// Processor is the union of all processor capabilities, satisfied by the Stripe
+// adapter, the Mux, and the test fake.
 type Processor interface {
 	ChargeProcessor
 	SubscriptionProcessor

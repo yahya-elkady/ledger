@@ -124,7 +124,8 @@ func (h *Handlers) CreatePayout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.processor.CreatePayout(r.Context(), processor.PayoutRequest{
-		Amount: req.Amount, Currency: req.Currency, Mode: mode, ProcessorAcctID: processorAcctID,
+		Processor: bankAccount[0].Processor, Amount: req.Amount, Currency: req.Currency,
+		Mode: mode, ProcessorAcctID: processorAcctID,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
