@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
 	"github.com/yahya-elkady/ledger/internal/auth"
@@ -112,6 +114,14 @@ type AuditLogger interface {
 	WriteAuditLog(ctx context.Context, e store.AuditEntry) error
 }
 
+// EventEmitter queues outbound webhook events for merchant endpoints. The
+// webhook.Dispatcher satisfies it in production; it only persists pending
+// deliveries (the background loop does the HTTP), so calling it inline is
+// cheap and never blocks on merchant servers.
+type EventEmitter interface {
+	Dispatch(ctx context.Context, merchantID, mode, eventType string, data any) error
+}
+
 // Handlers bundles the dependencies shared by all HTTP handlers. Store
 // dependencies are interfaces (see Deps) so handlers unit-test with fakes.
 type Handlers struct {
@@ -126,6 +136,7 @@ type Handlers struct {
 	payouts       PayoutStore
 	dashboard     DashboardStore
 	audit         AuditLogger
+	events        EventEmitter
 	processor     processor.Processor
 	stripeWebhook webhook.Verifier
 	plaidWebhook  webhook.Verifier
@@ -148,6 +159,7 @@ type Deps struct {
 	Payouts       PayoutStore
 	Dashboard     DashboardStore
 	Audit         AuditLogger
+	Events        EventEmitter
 	Processor     processor.Processor
 	StripeWebhook webhook.Verifier
 	PlaidWebhook  webhook.Verifier
@@ -170,6 +182,7 @@ func New(d Deps) *Handlers {
 		payouts:       d.Payouts,
 		dashboard:     d.Dashboard,
 		audit:         d.Audit,
+		events:        d.Events,
 		processor:     d.Processor,
 		stripeWebhook: d.StripeWebhook,
 		plaidWebhook:  d.PlaidWebhook,
@@ -221,6 +234,19 @@ func respondNotFoundOr500(w http.ResponseWriter, r *http.Request, err, notFound 
 		return
 	}
 	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
+}
+
+// emitEvent queues an outbound webhook event for the merchant's endpoints. It
+// is best-effort: a nil emitter (tests, partial wiring) or a queueing failure
+// never fails the primary operation. data must be a response model — never a
+// secret or card data.
+func (h *Handlers) emitEvent(ctx context.Context, merchantID, mode, eventType string, data any) {
+	if h.events == nil {
+		return
+	}
+	if err := h.events.Dispatch(ctx, merchantID, mode, eventType, data); err != nil {
+		log.Ctx(ctx).Warn().Err(err).Str("event", eventType).Msg("queueing outbound webhook failed")
+	}
 }
 
 // auditMutation records a mutation against the authenticated principal. It never

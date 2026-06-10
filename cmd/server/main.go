@@ -25,6 +25,8 @@ import (
 
 	"github.com/yahya-elkady/ledger/internal/config"
 	"github.com/yahya-elkady/ledger/internal/db"
+	"github.com/yahya-elkady/ledger/internal/store"
+	"github.com/yahya-elkady/ledger/internal/webhook"
 )
 
 func main() {
@@ -70,6 +72,20 @@ func run() error {
 		log.Info().Msg("redis client ready")
 	}
 
+	// Outbound webhook dispatcher: delivers signed events to merchant endpoints
+	// in the background (poll loop + exponential-backoff retries). It runs off
+	// the request path and stops when the root context is cancelled.
+	dispatcher := webhook.NewDispatcher(store.NewWebhookStore(pool), webhook.DispatcherConfig{
+		SigningSecret: cfg.WebhookSigningSecret,
+		MaxAttempts:   cfg.WebhookRetries,
+		BaseBackoff:   cfg.WebhookRetryBackoff(),
+	})
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		dispatcher.Run(ctx)
+	}()
+
 	router := newRouter(cfg, pool, rdb)
 
 	srv := &http.Server{
@@ -104,6 +120,13 @@ func run() error {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown failed: %w", err)
+	}
+	// The dispatcher stops via the root context; wait so in-flight webhook
+	// attempts finish recording their outcome before the pool closes.
+	select {
+	case <-dispatcherDone:
+	case <-shutdownCtx.Done():
+		log.Warn().Msg("webhook dispatcher did not stop before shutdown deadline")
 	}
 	log.Info().Msg("server stopped cleanly")
 	return nil

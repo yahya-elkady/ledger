@@ -116,6 +116,31 @@ func TestStripeWebhookUpdatesCharge(t *testing.T) {
 	if h.charges.byID["seed"].Status != "succeeded" {
 		t.Errorf("charge status = %q, want succeeded after webhook", h.charges.byID["seed"].Status)
 	}
+
+	// The inbound event is relayed to the merchant's own webhook endpoints
+	// (Phase 7): one outbound charge.succeeded queued for the owning merchant.
+	if len(h.events.events) != 1 {
+		t.Fatalf("outbound events = %d, want 1", len(h.events.events))
+	}
+	ev := h.events.events[0]
+	if ev.Type != "charge.succeeded" || ev.MerchantID != p2Merchant || ev.Mode != "test" {
+		t.Errorf("relayed event = %+v, want charge.succeeded for %s/test", ev, p2Merchant)
+	}
+}
+
+func TestCreateChargeEmitsOutboundEvent(t *testing.T) {
+	h := newHarness(t)
+	rr := httptest.NewRecorder()
+	body := `{"amount":1000,"currency":"USD","payment_method_id":"pm_1","processor":"stripe"}`
+	req := h.req(http.MethodPost, "/v1/charges", body, p2Merchant)
+	req.Header.Set("Idempotency-Key", "idem-emit-1")
+	h.h.CreateCharge(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create charge status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(h.events.events) != 1 || h.events.events[0].Type != "charge.succeeded" {
+		t.Fatalf("events = %+v, want one charge.succeeded", h.events.events)
+	}
 }
 
 func TestStripeWebhookRejectsBadSignature(t *testing.T) {

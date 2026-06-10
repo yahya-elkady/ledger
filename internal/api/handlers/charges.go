@@ -88,6 +88,12 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditMutation(r, "charge.created", "charges", charge.ID)
+	// Notify the merchant's webhook endpoints of the synchronous outcome.
+	event := "charge.succeeded"
+	if charge.Status == "failed" {
+		event = "charge.failed"
+	}
+	h.emitEvent(r.Context(), merchantID, mode, event, charge)
 	respond.JSON(w, r, http.StatusCreated, charge)
 }
 
@@ -171,6 +177,7 @@ func (h *Handlers) RefundCharge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditMutation(r, "charge.refunded", "charges", updated.ID)
+	h.emitEvent(r.Context(), merchantID, mode, "charge.refunded", updated)
 	respond.JSON(w, r, http.StatusOK, updated)
 }
 

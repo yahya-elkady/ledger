@@ -39,7 +39,25 @@ type harness struct {
 	audit         *fakeAudit
 	processor     *processor.Fake
 	stripeHook    *webhook.Fake
+	events        *fakeEmitter
 	jwt           *auth.JWTManager
+}
+
+// fakeEmitter records outbound webhook events queued by handlers.
+type fakeEmitter struct {
+	events []emittedEvent
+}
+
+type emittedEvent struct {
+	MerchantID string
+	Mode       string
+	Type       string
+	Data       any
+}
+
+func (f *fakeEmitter) Dispatch(_ context.Context, merchantID, mode, eventType string, data any) error {
+	f.events = append(f.events, emittedEvent{MerchantID: merchantID, Mode: mode, Type: eventType, Data: data})
+	return nil
 }
 
 func newHarness(t *testing.T) *harness {
@@ -61,6 +79,7 @@ func newHarness(t *testing.T) *harness {
 	po := newFakePayouts()
 	dash := &fakeDashboard{}
 	hook := &webhook.Fake{}
+	em := &fakeEmitter{}
 	h := handlers.New(handlers.Deps{
 		Merchants:     m,
 		APIKeys:       ak,
@@ -73,6 +92,7 @@ func newHarness(t *testing.T) *harness {
 		Payouts:       po,
 		Dashboard:     dash,
 		Audit:         au,
+		Events:        em,
 		Processor:     proc,
 		StripeWebhook: hook,
 		JWT:           jwtMgr,
@@ -82,7 +102,7 @@ func newHarness(t *testing.T) *harness {
 	return &harness{
 		h: h, merchants: m, apiKeys: ak, tokens: tk, customers: cu, charges: ch,
 		plans: pl, subscriptions: sub, bankAccounts: ba, payouts: po, dashboard: dash,
-		audit: au, processor: proc, stripeHook: hook, jwt: jwtMgr,
+		audit: au, processor: proc, stripeHook: hook, events: em, jwt: jwtMgr,
 	}
 }
 

@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases (see [`build.md`](build.md)). Phases 1–6 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, and the real Stripe/Plaid processor adapters. Remaining: outbound webhook dispatcher, multi-currency helpers, observability, the router/server assembly, and the integration test suite.
+> **Status:** built in phases. Phases 1–7 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, and the outbound webhook dispatcher. Remaining: multi-currency helpers, observability, the router/server assembly, and the integration test suite.
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -37,7 +37,7 @@ internal/
   ratelimit           Redis sliding-window limiter (atomic Lua)
   processor           processor seam: interfaces + Mux + retry/error mapping
     stripe / plaid    real vendor adapters
-  webhook             inbound verifier seam (Verifier + Fake)
+  webhook             inbound verifier seam + outbound dispatcher (signing, retries)
   ledger / payment    double-entry ledger core + payment state machine
 migrations            numbered SQL, applied via psql (golang-migrate-ready)
 ```
@@ -53,6 +53,7 @@ migrations            numbered SQL, applied via psql (golang-migrate-ready)
 - **Idempotency.** `POST` writes require an `Idempotency-Key`; responses are cached in Redis (24h) and replayed verbatim, so a retried "create charge" never charges twice. The DB `UNIQUE(idempotency_key)` is the backstop.
 - **Rate limiting.** A Redis sliding window implemented as a single atomic Lua script (`ZREMRANGEBYSCORE`+`ZADD`+`ZCARD`+`PEXPIRE`), keyed per identity, with `X-RateLimit-*` / `Retry-After` headers and fail-open behavior if Redis is down.
 - **Processor abstraction with a router.** Handlers call one `processor.Processor`; a **`Mux`** routes charges/payouts to Stripe or Plaid per request, while subscriptions (Stripe-only) always go to Stripe. Every adapter call runs through a shared **retry loop** (exponential backoff + jitter on transient 5xx/429) and a normalized **error classifier**.
+- **Outbound webhooks, signed and retried.** When a charge, payout, or subscription changes state, the service notifies the merchant's registered endpoints. Handlers only queue a pending delivery row (no merchant HTTP on the request path); a background dispatcher delivers with a 30s timeout and exponential-backoff retries (`60s · 2^attempt`), dead-lettering after the configured max attempts. Payloads are signed `HMAC-SHA256(secret, "<timestamp>.<payload>")` with a per-endpoint secret **derived** from the master signing secret — so no signing secret is ever stored — and the timestamp gives receivers 300-second replay protection.
 - **Money is always integer minor units.** No floats anywhere; currencies validated against an ISO 4217 allowlist.
 - **Append-only audit log.** Every mutation writes an `audit_logs` row (actor, action, resource, IP — never PII).
 - **Security-first persistence.** Least-privilege `payments_app` DB role (no DDL), soft deletes on financial tables, parameterized sqlc queries only, and `// PCI-DSS:` annotations on every function that touches a processor.
@@ -67,6 +68,7 @@ migrations            numbered SQL, applied via psql (golang-migrate-ready)
 4. **Handler** validates the body (`int64` amount, ISO currency, target), then calls `processor.CreateCharge`.
 5. The **`Mux`** routes to Stripe or Plaid; the adapter calls the SDK under the retry loop; a card decline comes back as a *recorded* `failed` charge, not an error.
 6. The charge is **persisted** (mode-scoped), an **audit** row is written, and the canonical JSON response is returned.
+7. A `charge.succeeded` (or `charge.failed`) **webhook event** is queued for the merchant's subscribed endpoints; the background dispatcher signs and delivers it with retries, off the request path.
 
 ---
 
