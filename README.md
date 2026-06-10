@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases. Phases 1–8 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, and the multi-currency helpers. Remaining: full test/live isolation pass, observability, the router/server assembly, and the integration test suite.
+> **Status:** built in phases. Phases 1–9 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, and verified test/live mode isolation (with a `make seed-test` fixture loader). Remaining: observability, the router/server assembly, and the integration test suite.
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -86,6 +86,7 @@ Go 1.26 · chi · pgx/v5 + sqlc · Redis (go-redis) · golang-jwt/v5 · bcrypt �
 cp .env.example .env          # fill in secrets (never commit .env)
 make migrate-up               # apply migrations (or psql -f migrations/*.sql)
 make test                     # full unit suite (uses in-memory fakes + miniredis)
+make seed-test                # load test-mode fixtures (merchant, API key, customer, charges)
 go run ./cmd/smoke            # double-entry ledger demo against Postgres
 ```
 
