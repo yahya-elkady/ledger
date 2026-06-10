@@ -7,6 +7,7 @@ import (
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
+	"github.com/yahya-elkady/ledger/internal/currency"
 	"github.com/yahya-elkady/ledger/internal/models"
 	"github.com/yahya-elkady/ledger/internal/processor"
 	"github.com/yahya-elkady/ledger/internal/store"
@@ -95,7 +96,7 @@ func (h *Handlers) CreatePayout(w http.ResponseWriter, r *http.Request) {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, "amount must be a positive integer", "amount")
 		return
 	}
-	if !validCurrencies[req.Currency] {
+	if !currency.ValidateCurrency(req.Currency) {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, "currency must be a supported ISO 4217 code", "currency")
 		return
 	}

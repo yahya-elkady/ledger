@@ -9,6 +9,7 @@ import (
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
+	"github.com/yahya-elkady/ledger/internal/currency"
 	"github.com/yahya-elkady/ledger/internal/models"
 	"github.com/yahya-elkady/ledger/internal/processor"
 	"github.com/yahya-elkady/ledger/internal/store"
@@ -214,7 +215,7 @@ func validatePlan(req planRequest) (string, string, bool) {
 	if req.Amount <= 0 {
 		return "amount must be a positive integer (minor units)", "amount", false
 	}
-	if !validCurrencies[req.Currency] {
+	if !currency.ValidateCurrency(req.Currency) {
 		return "currency must be a supported ISO 4217 code", "currency", false
 	}
 	if !validIntervals[req.Interval] {

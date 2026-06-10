@@ -9,6 +9,7 @@ import (
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
+	"github.com/yahya-elkady/ledger/internal/currency"
 	"github.com/yahya-elkady/ledger/internal/models"
 	"github.com/yahya-elkady/ledger/internal/processor"
 	"github.com/yahya-elkady/ledger/internal/store"
@@ -190,17 +191,12 @@ func parseChargeFilter(r *http.Request) store.ChargeFilter {
 	}
 }
 
-var validCurrencies = map[string]bool{
-	"USD": true, "EUR": true, "GBP": true, "CAD": true, "AUD": true, "JPY": true,
-	"CHF": true, "MXN": true, "BRL": true, "INR": true, "SGD": true, "HKD": true,
-}
-
 // validateCharge validates the create-charge request.
 func validateCharge(req chargeRequest) (string, string, bool) {
 	if req.Amount <= 0 {
 		return "amount must be a positive integer (minor units)", "amount", false
 	}
-	if !validCurrencies[req.Currency] {
+	if !currency.ValidateCurrency(req.Currency) {
 		return "currency must be a supported ISO 4217 code", "currency", false
 	}
 	if req.CustomerID == "" && req.PaymentMethodID == "" {
