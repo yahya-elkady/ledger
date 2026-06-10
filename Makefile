@@ -10,7 +10,7 @@ endif
 MIGRATIONS_DIR := migrations
 SERVER_PKG     := ./cmd/server
 
-.PHONY: run build test generate lint migrate-up migrate-down seed-test tidy help
+.PHONY: run build test test-integration generate lint migrate-up migrate-down seed-test tidy help
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -21,8 +21,11 @@ run: ## Run the HTTP server
 build: ## Build the server binary into ./bin
 	go build -o bin/server $(SERVER_PKG)
 
-test: ## Run the full test suite
+test: ## Run the unit test suite (no Docker needed)
 	go test ./...
+
+test-integration: ## Run the dockertest end-to-end suite (requires a Docker daemon)
+	go test -tags=integration ./internal/integration/...
 
 generate: ## Regenerate sqlc type-safe query code
 	sqlc generate

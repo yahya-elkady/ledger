@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases. Phases 1–11 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), the assembled chi router (ordered middleware, CORS, JSON 404/405, inbound Stripe webhook verifier), and observability (structured request logs + Prometheus `/metrics`). Remaining: the integration test suite.
+> **Status:** built in phases. Phases 1–12 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), the assembled chi router (ordered middleware, CORS, JSON 404/405, inbound Stripe webhook verifier), observability (structured request logs + Prometheus `/metrics`), and the test suite (unit + a dockertest end-to-end suite). Remaining: Docker/deployment prep and the final hardening pass.
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -104,7 +104,9 @@ Two schemas coexist in one database: the double-entry **ledger** (`accounts`, `e
 
 ## Testing
 
-Pure logic is unit-tested without external services: auth crypto, the rate-limiter (against miniredis), every middleware, all handlers (via store fakes), and the processor retry/error/routing logic. The Stripe and Plaid adapters compile against the real SDKs and have their non-network logic (mode-aware key selection, token parsing, amount formatting) tested directly; full sandbox integration tests are scheduled for the integration-test phase.
+Pure logic is unit-tested without external services: auth crypto, the rate-limiter (against miniredis), every middleware, all handlers (via store fakes), the router wiring, the currency and metrics helpers, the Stripe webhook verifier, and the processor retry/error/routing logic. `make test` runs this suite — fast and Docker-free.
+
+A **dockertest end-to-end suite** (`internal/integration`, behind a `//go:build integration` tag) exercises the real router → middleware → stores path against throwaway `postgres:16` + `redis:7` containers: register/login, API-key generation and use, the full charge flow with DB assertions, idempotent replay, rate-limit 429s, and test/live mode isolation. Run it with `make test-integration` (requires a Docker daemon; only the Stripe/Plaid processor is faked). The Stripe/Plaid adapters' own non-network logic (mode-aware key selection, token parsing, amount formatting) is unit-tested directly.
 
 ---
 
