@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"math"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/yahya-elkady/ledger/internal/api/respond"
+	"github.com/yahya-elkady/ledger/internal/metrics"
 	"github.com/yahya-elkady/ledger/internal/ratelimit"
 )
 
@@ -79,6 +81,19 @@ func (m *RateLimitMiddleware) subjectAndLimit(r *http.Request) (string, int) {
 	}
 }
 
+// clientType classifies the request's principal for the rate-limit metric:
+// "api_key", "dashboard", or "ip" for unauthenticated traffic.
+func clientType(ctx context.Context) string {
+	switch Principal(ctx) {
+	case PrincipalAPIKey:
+		return "api_key"
+	case PrincipalJWT:
+		return "dashboard"
+	default:
+		return "ip"
+	}
+}
+
 // enforce runs the limiter for key/limit, sets headers, and either forwards to
 // next or returns 429.
 func (m *RateLimitMiddleware) enforce(w http.ResponseWriter, r *http.Request, next http.Handler, key string, limit int) {
@@ -94,6 +109,7 @@ func (m *RateLimitMiddleware) enforce(w http.ResponseWriter, r *http.Request, ne
 	setRateLimitHeaders(w, info)
 
 	if !allowed {
+		metrics.RateLimitHit(clientType(r.Context()), Mode(r.Context()))
 		retryAfter := int(math.Ceil(info.RetryAfter.Seconds()))
 		if retryAfter < 1 {
 			retryAfter = 1

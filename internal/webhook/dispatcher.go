@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+
+	"github.com/yahya-elkady/ledger/internal/metrics"
 )
 
 // Delivery statuses persisted in webhook_deliveries.status.
@@ -189,12 +191,14 @@ func (d *Dispatcher) deliver(ctx context.Context, delivery Delivery) {
 	if err != nil {
 		// Corrupt stored payload: dead-letter immediately, a retry cannot fix it.
 		d.finish(ctx, delivery.ID, AttemptOutcome{Status: StatusFailed, ResponseBody: "invalid stored payload"})
+		metrics.WebhookDelivery("failed")
 		return
 	}
 
 	status, respBody, err := d.post(ctx, delivery, body, now.Unix())
 	if err == nil && status >= 200 && status < 300 {
 		d.finish(ctx, delivery.ID, AttemptOutcome{Status: StatusDelivered, ResponseStatus: status, ResponseBody: respBody})
+		metrics.WebhookDelivery("delivered")
 		return
 	}
 	if err != nil {
@@ -204,6 +208,7 @@ func (d *Dispatcher) deliver(ctx context.Context, delivery Delivery) {
 	attempt := delivery.AttemptCount + 1 // count including this attempt
 	if attempt >= d.cfg.MaxAttempts {
 		d.finish(ctx, delivery.ID, AttemptOutcome{Status: StatusFailed, ResponseStatus: status, ResponseBody: respBody})
+		metrics.WebhookDelivery("failed")
 		log.Ctx(ctx).Warn().Str("delivery_id", delivery.ID).Str("event", delivery.EventType).
 			Int("attempts", attempt).Msg("webhook delivery dead-lettered")
 		return

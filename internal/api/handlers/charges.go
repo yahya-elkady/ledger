@@ -10,6 +10,7 @@ import (
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
 	"github.com/yahya-elkady/ledger/internal/currency"
+	"github.com/yahya-elkady/ledger/internal/metrics"
 	"github.com/yahya-elkady/ledger/internal/models"
 	"github.com/yahya-elkady/ledger/internal/processor"
 	"github.com/yahya-elkady/ledger/internal/store"
@@ -89,6 +90,7 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditMutation(r, "charge.created", "charges", charge.ID)
+	metrics.Charge(charge.Status, charge.Currency, charge.Processor, charge.Mode, charge.Amount)
 	// Notify the merchant's webhook endpoints of the synchronous outcome.
 	event := "charge.succeeded"
 	if charge.Status == "failed" {

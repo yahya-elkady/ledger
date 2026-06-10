@@ -7,6 +7,7 @@ package api
 
 import (
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
 	"github.com/yahya-elkady/ledger/internal/auth"
+	"github.com/yahya-elkady/ledger/internal/metrics"
 )
 
 // RouterDeps are the dependencies needed to build the router. The middleware and
@@ -58,6 +60,10 @@ func NewRouter(d RouterDeps) http.Handler {
 
 	// Liveness — no auth.
 	r.Get("/health", d.Health)
+
+	// Prometheus scrape endpoint — no auth. In production this must be
+	// restricted at the network/proxy layer (not exposed publicly).
+	r.Handle("/metrics", metrics.Handler())
 
 	r.Route("/v1", func(r chi.Router) {
 		// --- auth: unauthenticated (per-IP limited) + logout (JWT) -----------
@@ -198,20 +204,37 @@ func bearerToken(r *http.Request) (string, bool) {
 	return tok, tok != ""
 }
 
-// requestLogger logs one structured line per request: method, path, status,
-// latency, request id. It never logs the body or Authorization header.
+// requestLogger logs one structured line per request and records HTTP metrics.
+// It logs request_id, method, path, status, latency_ms, and — once auth has run
+// — merchant_id and mode. It never logs the body or the Authorization header.
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 		start := time.Now()
 		next.ServeHTTP(ww, r)
-		log.Info().
+		latency := time.Since(start)
+
+		// Route pattern (e.g. /v1/charges/{id}) keeps the metric label bounded;
+		// fall back to "other" for unmatched paths.
+		pattern := chi.RouteContext(r.Context()).RoutePattern()
+		if pattern == "" {
+			pattern = "other"
+		}
+		metrics.HTTPRequest(r.Method, pattern, ww.Status(), latency)
+
+		ev := log.Info().
 			Str("request_id", chimw.GetReqID(r.Context())).
 			Str("method", r.Method).
 			Str("path", r.URL.Path).
 			Int("status", ww.Status()).
-			Dur("latency", time.Now().Sub(start)).
-			Msg("http request")
+			Int64("latency_ms", latency.Milliseconds())
+		if mid := middleware.MerchantID(r.Context()); mid != "" {
+			ev = ev.Str("merchant_id", mid)
+		}
+		if mode := middleware.Mode(r.Context()); mode != "" {
+			ev = ev.Str("mode", mode)
+		}
+		ev.Msg("http request")
 	})
 }
 
@@ -221,9 +244,15 @@ func jsonRecoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				// http.ErrAbortHandler is a deliberate abort, not a bug — re-panic
+				// so the server handles it as intended rather than masking it.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
 				log.Error().
 					Str("request_id", chimw.GetReqID(r.Context())).
 					Interface("panic", rec).
+					Bytes("stack", debug.Stack()).
 					Msg("recovered from panic")
 				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
 			}

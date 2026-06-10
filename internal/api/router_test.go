@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,20 @@ func TestUnauthenticatedRoutesReturn401(t *testing.T) {
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s = %d, want 401", c.method, c.path, rr.Code)
 		}
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	r := testRouter(t, nil)
+	// Drive a request so the logger middleware records an http_requests_total.
+	do(t, r, http.MethodGet, "/v1/charges", nil)
+
+	rr := do(t, r, http.MethodGet, "/metrics", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /metrics = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "http_requests_total") {
+		t.Error("/metrics output missing http_requests_total")
 	}
 }
 
