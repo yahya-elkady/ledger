@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases. Phases 1–9 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, and verified test/live mode isolation (with a `make seed-test` fixture loader). Remaining: observability, the router/server assembly, and the integration test suite.
+> **Status:** built in phases. Phases 1–10 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), and the assembled chi router with its ordered middleware stack, CORS, JSON 404/405, and a real inbound Stripe webhook verifier. Remaining: observability and the integration test suite.
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -28,6 +28,7 @@ internal/
   db                  pgxpool (bounded, ping-on-start)
   auth                pure crypto: API-key HMAC, JWT, bcrypt   (no I/O, unit-tested)
   api/
+    router            full /v1 route tree + ordered middleware stack, CORS, 404/405
     respond           canonical JSON error envelope (leaf pkg)
     middleware         API-key + JWT auth, scope, mode, rate limit, idempotency
     handlers           REST handlers (depend on store *interfaces*, fake-tested)
@@ -80,13 +81,14 @@ Go 1.26 · chi · pgx/v5 + sqlc · Redis (go-redis) · golang-jwt/v5 · bcrypt �
 
 ## Running it
 
-> The HTTP server is assembled in a later phase; today the pieces are exercised by `go test` and a ledger smoke command. Local Postgres + Redis are expected.
+> The full `/v1` HTTP API is assembled and runnable (`make run`); the integration test suite lands in a later phase. Local Postgres + Redis are expected.
 
 ```bash
 cp .env.example .env          # fill in secrets (never commit .env)
 make migrate-up               # apply migrations (or psql -f migrations/*.sql)
 make test                     # full unit suite (uses in-memory fakes + miniredis)
 make seed-test                # load test-mode fixtures (merchant, API key, customer, charges)
+make run                      # start the HTTP server (GET /health to check)
 go run ./cmd/smoke            # double-entry ledger demo against Postgres
 ```
 

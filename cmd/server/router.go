@@ -6,30 +6,96 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/yahya-elkady/ledger/internal/api"
+	"github.com/yahya-elkady/ledger/internal/api/handlers"
+	"github.com/yahya-elkady/ledger/internal/api/middleware"
+	"github.com/yahya-elkady/ledger/internal/auth"
 	"github.com/yahya-elkady/ledger/internal/config"
+	"github.com/yahya-elkady/ledger/internal/processor"
+	"github.com/yahya-elkady/ledger/internal/processor/plaid"
+	"github.com/yahya-elkady/ledger/internal/processor/stripe"
+	"github.com/yahya-elkady/ledger/internal/ratelimit"
+	"github.com/yahya-elkady/ledger/internal/store"
+	"github.com/yahya-elkady/ledger/internal/webhook"
 )
 
-// newRouter builds the Phase 1 router: baseline middleware plus a health check.
-// The full /v1 route tree (auth, charges, subscriptions, …) is assembled in a
-// later phase; this is the minimal wiring needed to stand the server up.
-func newRouter(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client) http.Handler {
-	r := chi.NewRouter()
+// authRatePerMin caps unauthenticated auth attempts (register/login) per IP.
+const authRatePerMin = 10
 
-	// Baseline middleware. The full ordered stack (rate limit, auth, mode,
-	// idempotency) is added with the route tree in a later phase.
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Recoverer)
+// newRouter wires every dependency — stores, auth crypto, processor adapters,
+// webhook verifiers, middleware — and builds the full /v1 route tree via the
+// api package. The dispatcher (passed in) is reused as the outbound event
+// emitter so handlers queue webhook deliveries on the same store.
+func newRouter(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, emitter handlers.EventEmitter) http.Handler {
+	// Auth crypto.
+	jwtMgr, err := auth.NewJWTManager(cfg.JWTAccessSecret, cfg.JWTRefreshSecret, cfg.AccessTTL(), cfg.RefreshTTL())
+	if err != nil {
+		// Config.validate already guarantees distinct, long-enough secrets, so a
+		// failure here is a programming error.
+		panic(err)
+	}
+	hasher := auth.NewAPIKeyHasher(cfg.APIKeyHMACSecret)
 
-	r.Get("/health", healthHandler(pool, rdb))
+	// Processor adapters behind the routing Mux (Stripe owns subscriptions; Plaid
+	// handles ACH charges/payouts).
+	stripeClient := stripe.New(stripe.Config{
+		LiveKey: cfg.StripeSecretKeyLive,
+		TestKey: cfg.StripeSecretKeyTest,
+	})
+	plaidClient := plaid.New(plaid.Config{
+		ClientID:         cfg.PlaidClientID,
+		SandboxSecret:    cfg.PlaidSecretSandbox,
+		ProductionSecret: cfg.PlaidSecretLive,
+	})
+	proc := processor.NewMux(stripeClient, map[string]processor.ChargePayoutProcessor{
+		processor.Plaid: plaidClient,
+	})
 
-	return r
+	// Stores. AuthStore backs both the API-key and refresh-token handler seams.
+	authStore := store.NewAuthStore(pool)
+	billingStore := store.NewBillingStore(pool)
+	payoutStore := store.NewPayoutStore(pool)
+
+	h := handlers.New(handlers.Deps{
+		Merchants:     store.NewMerchantStore(pool),
+		APIKeys:       authStore,
+		Tokens:        authStore,
+		Customers:     store.NewCustomerStore(pool),
+		Charges:       store.NewChargeStore(pool),
+		Plans:         billingStore,
+		Subscriptions: billingStore,
+		BankAccounts:  payoutStore,
+		Payouts:       payoutStore,
+		Dashboard:     store.NewDashboardStore(pool),
+		Audit:         store.NewAuditStore(pool),
+		Events:        emitter,
+		Processor:     proc,
+		StripeWebhook: webhook.NewStripeVerifier(cfg.StripeWebhookSecret),
+		PlaidWebhook:  webhook.NewPlaidVerifier(),
+		JWT:           jwtMgr,
+		Hasher:        hasher,
+		AccessTTL:     cfg.AccessTTL(),
+	})
+
+	// Middleware.
+	authn := middleware.NewAuthenticator(authStore, jwtMgr, hasher, rdb)
+	limiter := ratelimit.NewRateLimiter(rdb)
+	rl := middleware.NewRateLimitMiddleware(limiter, cfg.RateLimitLiveRPM, cfg.RateLimitTestRPM, cfg.RateLimitDashboardRPM)
+	idem := middleware.NewIdempotency(rdb)
+
+	return api.NewRouter(api.RouterDeps{
+		Handlers:       h,
+		Auth:           authn,
+		RateLimit:      rl,
+		Idempotency:    idem,
+		AllowedOrigins: cfg.AllowedOrigins,
+		Health:         healthHandler(pool, rdb),
+		AuthRatePerMin: authRatePerMin,
+	})
 }
 
 // healthResponse is the body returned by GET /health.

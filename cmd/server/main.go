@@ -86,7 +86,9 @@ func run() error {
 		dispatcher.Run(ctx)
 	}()
 
-	router := newRouter(cfg, pool, rdb)
+	// The dispatcher doubles as the handlers' outbound event emitter: handlers
+	// queue pending deliveries on the same store the poll loop drains.
+	router := newRouter(cfg, pool, rdb, dispatcher)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
