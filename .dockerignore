@@ -1,0 +1,11 @@
+# Keep the build context small and never ship secrets or local cruft.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+bin/
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore

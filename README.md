@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases. Phases 1–12 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), the assembled chi router (ordered middleware, CORS, JSON 404/405, inbound Stripe webhook verifier), observability (structured request logs + Prometheus `/metrics`), and the test suite (unit + a dockertest end-to-end suite). Remaining: Docker/deployment prep and the final hardening pass.
+> **Status:** built in phases. Phases 1–12 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), the assembled chi router (ordered middleware, CORS, JSON 404/405, inbound Stripe webhook verifier), observability (structured request logs + Prometheus `/metrics`), the test suite (unit + a dockertest end-to-end suite), and Docker/Compose deployment (multi-stage non-root image, one-shot migration runner). Remaining: the final review & hardening pass.
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -83,12 +83,27 @@ Go 1.26 · chi · pgx/v5 + sqlc · Redis (go-redis) · golang-jwt/v5 · bcrypt �
 
 ## Running it
 
-> The full `/v1` HTTP API is assembled and runnable (`make run`); the integration test suite lands in a later phase. Local Postgres + Redis are expected.
+### With Docker Compose (recommended)
+
+The whole stack — API, PostgreSQL, Redis — comes up with one command. Postgres provisions the least-privilege roles on first init, a one-shot `migrate` job applies the schema, and the API starts only once migrations finish.
+
+```bash
+cp .env.example .env           # fill in the JWT/HMAC/webhook secrets (>= 32 chars each)
+docker compose up --build      # starts postgres + redis + migrate + api
+curl localhost:8080/health     # -> {"status":"ok","db":"ok","redis":"ok"}
+docker compose down -v         # stop and wipe volumes
+```
+
+The `api` image is a multi-stage, static, **non-root distroless** build. Migrations run in a dedicated `migrate` service as the `payments_migrations` role (the app's `payments_app` role has no DDL rights by design); applied files are tracked in a `schema_migrations` table so re-runs are idempotent.
+
+### Without Docker (local toolchain)
+
+Local Postgres + Redis expected; configure `DATABASE_URL`/`REDIS_URL` in `.env`.
 
 ```bash
 cp .env.example .env          # fill in secrets (never commit .env)
 make migrate-up               # apply migrations (or psql -f migrations/*.sql)
-make test                     # full unit suite (uses in-memory fakes + miniredis)
+make test                     # unit suite (in-memory fakes + miniredis)
 make seed-test                # load test-mode fixtures (merchant, API key, customer, charges)
 make run                      # start the HTTP server (GET /health to check)
 go run ./cmd/smoke            # double-entry ledger demo against Postgres
@@ -107,6 +122,63 @@ Two schemas coexist in one database: the double-entry **ledger** (`accounts`, `e
 Pure logic is unit-tested without external services: auth crypto, the rate-limiter (against miniredis), every middleware, all handlers (via store fakes), the router wiring, the currency and metrics helpers, the Stripe webhook verifier, and the processor retry/error/routing logic. `make test` runs this suite — fast and Docker-free.
 
 A **dockertest end-to-end suite** (`internal/integration`, behind a `//go:build integration` tag) exercises the real router → middleware → stores path against throwaway `postgres:16` + `redis:7` containers: register/login, API-key generation and use, the full charge flow with DB assertions, idempotent replay, rate-limit 429s, and test/live mode isolation. Run it with `make test-integration` (requires a Docker daemon; only the Stripe/Plaid processor is faked). The Stripe/Plaid adapters' own non-network logic (mode-aware key selection, token parsing, amount formatting) is unit-tested directly.
+
+---
+
+## API reference
+
+Base path `/v1`. Errors use one envelope: `{"error","message","param?","request_id"}`. Collections return `{"data":[...],"next_cursor":"..."}`. All `POST` writes behind auth require an `Idempotency-Key` header. Amounts are integer minor units; currencies are validated against the ISO 4217 allowlist.
+
+| Method & path | Auth | Notes |
+|---|---|---|
+| `POST /v1/auth/register` | none | create merchant, returns access + refresh tokens (10/min per IP) |
+| `POST /v1/auth/login` | none | returns tokens; generic 401 on bad creds (10/min per IP) |
+| `POST /v1/auth/refresh` | none | rotates the refresh token (reuse rejected) |
+| `POST /v1/auth/logout` | JWT | revokes the refresh token |
+| `POST/GET /v1/apikeys`, `GET/DELETE /v1/apikeys/{id}` | JWT | key plaintext shown once on create |
+| `POST/GET /v1/customers`, `GET/PUT/DELETE /v1/customers/{id}` | API key (write) or JWT | |
+| `POST/GET /v1/charges`, `GET /v1/charges/{id}`, `POST /v1/charges/{id}/refund` | API key (write) | |
+| `POST/GET /v1/plans`, `DELETE /v1/plans/{id}` | API key (write) | |
+| `POST/GET /v1/subscriptions`, `GET /v1/subscriptions/{id}`, `POST /v1/subscriptions/{id}/cancel` | API key (write) | |
+| `POST/GET /v1/bank-accounts`, `DELETE /v1/bank-accounts/{id}` | API key (admin) | |
+| `POST/GET /v1/payouts`, `GET /v1/payouts/{id}` | API key (admin) | |
+| `POST /v1/webhooks/stripe`, `POST /v1/webhooks/plaid` | signature | inbound processor events |
+| `GET /v1/dashboard/overview`, `GET /v1/dashboard/transactions` | JWT | mode-isolated aggregates |
+| `GET /health`, `GET /metrics` | none | liveness; Prometheus scrape (restrict `/metrics` at the proxy in prod) |
+
+### Authentication
+
+- **Machine clients** send `Authorization: Bearer sk_live_…` / `sk_test_…`. Keys are scoped `read` < `write` < `admin`; only the HMAC hash is stored.
+- **Dashboard users** send `Authorization: Bearer <jwt>`. Access tokens last 15 min; refresh with `POST /v1/auth/refresh` (rotation invalidates the old token).
+
+## Webhook signature verification (for merchants)
+
+Outbound events POST a JSON body `{"id","type","created","data"}` with two headers:
+
+- `X-Payments-Timestamp: <unix seconds>`
+- `X-Payments-Signature: sha256=<hex hmac>`
+
+The signature is `HMAC-SHA256(endpoint_secret, "<timestamp>.<raw_body>")`. To verify, recompute it over the **raw** request body and compare in constant time, then reject timestamps outside a tolerance window (we use 300s) to block replays:
+
+```python
+import hashlib, hmac, time
+def verify(raw_body: bytes, ts: str, sig: str, secret: str) -> bool:
+    if abs(time.time() - int(ts)) > 300:          # replay window
+        return False
+    mac = hmac.new(secret.encode(), f"{ts}.".encode() + raw_body, hashlib.sha256)
+    expected = "sha256=" + mac.hexdigest()
+    return hmac.compare_digest(expected, sig)      # constant-time
+```
+
+The per-endpoint secret is shown once when the endpoint is registered; it is derived from the service's master signing secret and never stored in plaintext.
+
+## Test vs live mode
+
+Every API key and JWT carries a `mode` (`test` or `live`); mode-bearing tables (`charges`, `subscriptions`, `payouts`, `plans`) filter by it, so test and live data never mix. A test-mode key cannot read a live-mode charge (returns 404) and vice versa. The processor adapters select credentials by mode — a live Stripe/Plaid key is never used for a test request, and sandbox vs production environments are chosen accordingly. Use `make seed-test` to load test-mode fixtures. Test mode also has lower rate limits (`RATE_LIMIT_TEST_RPM`).
+
+## PCI-DSS notes
+
+This service is built to **avoid handling raw cardholder data** — it stores only processor tokens/ids (`pm_…`, `ch_…`), never PANs, CVVs, or full bank numbers. Card capture should use the processor's client-side tokenization (e.g. Stripe Elements) so raw card data never reaches this server, keeping it in PCI-DSS SAQ-A scope. Supporting controls in this codebase: `// PCI-DSS:` annotations on every function that touches payment instruments or processor calls; structured logs that never include card numbers, CVVs, account numbers, or raw API keys (IDs and masked values only); API keys, refresh tokens, and webhook secrets stored only as hashes/derived secrets; TLS terminated at the proxy with the app on internal HTTP; and an append-only `audit_logs` trail for every mutation. These annotations are documentation aids, not a substitute for a formal audit.
 
 ---
 

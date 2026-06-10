@@ -12,6 +12,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Wait for the one-shot migrate job to finish before the app (which has no
+      # DDL rights) starts and expects the schema to exist.
+      migrate:
+        condition: service_completed_successfully
     environment:
       # App connects as the least-privilege payments_app role, never superuser.
       DATABASE_URL: postgres://payments_app:${PAYMENTS_APP_PASSWORD:-app_password}@postgres:5432/payments?sslmode=disable
@@ -48,6 +52,36 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # One-shot migration runner. Applies migrations/*.sql in order as the
+  # payments_migrations role (which owns DDL), tracking applied files in a
+  # schema_migrations table so re-runs are idempotent. The app role deliberately
+  # cannot run DDL (Security Rule #1), so migrations run here, not on app start.
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${PAYMENTS_MIGRATIONS_PASSWORD:-migrations_password}
+    volumes:
+      - ./migrations:/migrations:ro
+    entrypoint: ["sh", "-euc"]
+    command: |
+      PSQL="psql -h postgres -U payments_migrations -d payments -v ON_ERROR_STOP=1"
+      $$PSQL -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());"
+      for f in $$(ls /migrations/*.sql | sort); do
+        base=$$(basename "$$f")
+        if [ "$$($$PSQL -tAc "SELECT 1 FROM schema_migrations WHERE filename='$$base'")" = "1" ]; then
+          echo "skip $$base (already applied)"
+          continue
+        fi
+        echo "applying $$base"
+        $$PSQL -1 -f "$$f"
+        $$PSQL -c "INSERT INTO schema_migrations(filename) VALUES ('$$base')"
+      done
+      echo "migrations complete"
+    restart: "no"
 
   redis:
     image: redis:7-alpine
