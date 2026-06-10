@@ -41,7 +41,7 @@ func TestIdempotencyReplay(t *testing.T) {
 		n := atomic.AddInt32(&calls, 1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprintf(w, `{"id":"charge_%d"}`, n)
+		_, _ = fmt.Fprintf(w, `{"id":"charge_%d"}`, n)
 	}))
 
 	// First request runs the handler and returns its response.

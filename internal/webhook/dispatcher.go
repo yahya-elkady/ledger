@@ -215,6 +215,9 @@ func (d *Dispatcher) deliver(ctx context.Context, delivery Delivery) {
 	}
 	// Exponential backoff per build.md: base * 2^attempt.
 	next := now.Add(d.cfg.BaseBackoff * (1 << attempt))
+	log.Ctx(ctx).Warn().Str("delivery_id", delivery.ID).Str("event", delivery.EventType).
+		Int("attempt", attempt).Int("response_status", status).Time("next_retry_at", next).
+		Msg("webhook delivery attempt failed, retry scheduled")
 	d.finish(ctx, delivery.ID, AttemptOutcome{Status: StatusPending, NextRetryAt: &next, ResponseStatus: status, ResponseBody: respBody})
 }
 

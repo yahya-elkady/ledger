@@ -19,7 +19,8 @@ const DefaultToleranceSeconds = 300
 // attacker cannot reuse an old signature with a fresh timestamp.
 func SignPayload(payload []byte, secret string, timestamp int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%d.", timestamp)
+	// hash.Hash writes never return an error.
+	_, _ = fmt.Fprintf(mac, "%d.", timestamp)
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }

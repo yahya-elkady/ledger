@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
@@ -43,6 +45,8 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 	if !bind(w, r, &req) {
 		return
 	}
+	// Normalize before validating so "usd" and "USD" persist identically.
+	req.Currency = strings.ToUpper(req.Currency)
 	if msg, param, ok := validateCharge(req); !ok {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, msg, param)
 		return
@@ -61,6 +65,9 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 		Description:       req.Description,
 	})
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("processor", req.Processor).
+			Int64("amount", req.Amount).Str("currency", req.Currency).Str("mode", mode).
+			Msg("charge creation failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}
@@ -82,13 +89,23 @@ func (h *Handlers) CreateCharge(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrIdempotencyConflict) {
+			log.Ctx(r.Context()).Warn().Str("merchant_id", merchantID).
+				Str("idempotency_key", r.Header.Get("Idempotency-Key")).
+				Msg("idempotency conflict: duplicate charge rejected by DB constraint")
 			respond.Error(w, r, http.StatusConflict, respond.CodeIdempotencyConflict, "a charge with this idempotency key already exists")
 			return
 		}
+		log.Ctx(r.Context()).Error().Err(err).Msg("persisting charge failed after processor call")
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
 		return
 	}
 
+	// Money trail: every charge outcome is logged with its identifiers — never
+	// card data (only opaque processor ids ever reach this service).
+	log.Ctx(r.Context()).Info().Str("charge_id", charge.ID).Str("merchant_id", merchantID).
+		Int64("amount", charge.Amount).Str("currency", charge.Currency).
+		Str("processor", charge.Processor).Str("status", charge.Status).Str("mode", mode).
+		Msg("charge created")
 	h.auditMutation(r, "charge.created", "charges", charge.ID)
 	metrics.Charge(charge.Status, charge.Currency, charge.Processor, charge.Mode, charge.Amount)
 	// Notify the merchant's webhook endpoints of the synchronous outcome.
@@ -164,6 +181,9 @@ func (h *Handlers) RefundCharge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := h.processor.RefundCharge(r.Context(), charge.Processor, charge.ProcessorChargeID, amount, mode); err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("charge_id", charge.ID).
+			Str("processor", charge.Processor).Int64("refund_amount", amount).
+			Msg("refund failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}
@@ -179,6 +199,10 @@ func (h *Handlers) RefundCharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Ctx(r.Context()).Info().Str("charge_id", updated.ID).Str("merchant_id", merchantID).
+		Int64("refund_amount", amount).Int64("total_refunded", newRefunded).
+		Str("currency", updated.Currency).Str("status", status).Str("mode", mode).
+		Msg("charge refunded")
 	h.auditMutation(r, "charge.refunded", "charges", updated.ID)
 	h.emitEvent(r.Context(), merchantID, mode, "charge.refunded", updated)
 	respond.JSON(w, r, http.StatusOK, updated)

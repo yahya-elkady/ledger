@@ -58,6 +58,10 @@ func (a *Authenticator) APIKeyMiddleware(next http.Handler) http.Handler {
 		rec, err := a.resolveAPIKey(r.Context(), hash)
 		if err != nil {
 			if errors.Is(err, store.ErrAPIKeyNotFound) {
+				// Abuse signal: a structurally-valid key that matches nothing.
+				// The hash prefix (not the key) is logged for correlation.
+				log.Ctx(r.Context()).Warn().Str("key_hash_prefix", hashPrefix(hash)).
+					Str("ip", clientIP(r)).Msg("auth failure: unknown api key")
 				respond.Error(w, r, http.StatusUnauthorized, respond.CodeInvalidAPIKey, "invalid API key")
 				return
 			}
@@ -67,7 +71,11 @@ func (a *Authenticator) APIKeyMiddleware(next http.Handler) http.Handler {
 		}
 
 		if !rec.IsActive(time.Now()) {
-			// Revoked or expired — same opaque response as an unknown key.
+			// Revoked or expired — same opaque response as an unknown key, but
+			// logged distinctly: use of a dead key is worth investigating.
+			log.Ctx(r.Context()).Warn().Str("api_key_id", rec.ID).
+				Str("merchant_id", rec.MerchantID).Bool("revoked", rec.IsRevoked()).
+				Str("ip", clientIP(r)).Msg("auth failure: revoked or expired api key")
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeInvalidAPIKey, "invalid API key")
 			return
 		}
@@ -92,9 +100,13 @@ func (a *Authenticator) JWTMiddleware(next http.Handler) http.Handler {
 		claims, err := a.jwt.ValidateAccessToken(token)
 		if err != nil {
 			if errors.Is(err, auth.ErrTokenExpired) {
+				// Expired tokens are routine (clients refresh); log at debug.
+				log.Ctx(r.Context()).Debug().Msg("auth failure: expired access token")
 				respond.Error(w, r, http.StatusUnauthorized, respond.CodeTokenExpired, "access token expired")
 				return
 			}
+			// A token that fails signature/claims validation is an abuse signal.
+			log.Ctx(r.Context()).Warn().Str("ip", clientIP(r)).Msg("auth failure: invalid access token")
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeAuthenticationRequired, "invalid token")
 			return
 		}
@@ -111,6 +123,9 @@ func RequireScope(required string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !scopeSatisfies(Scope(r.Context()), required) {
+				log.Ctx(r.Context()).Warn().Str("merchant_id", MerchantID(r.Context())).
+					Str("required_scope", required).Strs("held_scope", Scope(r.Context())).
+					Msg("authorization failure: insufficient scope")
 				respond.Error(w, r, http.StatusForbidden, respond.CodeInsufficientScope,
 					"this API key lacks the required scope")
 				return
@@ -191,6 +206,15 @@ func (a *Authenticator) cacheAPIKey(ctx context.Context, hash string, rec *store
 }
 
 func apiKeyCacheKey(hash string) string { return "apikey:" + hash }
+
+// hashPrefix returns the first 8 hex chars of a key hash — enough to correlate
+// repeated failures in logs without recording the full hash.
+func hashPrefix(hash string) string {
+	if len(hash) > 8 {
+		return hash[:8]
+	}
+	return hash
+}
 
 // bearerToken extracts the token from an `Authorization: Bearer <token>` header.
 func bearerToken(r *http.Request) (string, bool) {

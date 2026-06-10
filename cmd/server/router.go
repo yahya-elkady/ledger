@@ -60,6 +60,10 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, emitte
 	billingStore := store.NewBillingStore(pool)
 	payoutStore := store.NewPayoutStore(pool)
 
+	// The authenticator doubles as the handlers' API-key cache invalidator, so
+	// revoking a key evicts its Redis entry immediately.
+	authn := middleware.NewAuthenticator(authStore, jwtMgr, hasher, rdb)
+
 	h := handlers.New(handlers.Deps{
 		Merchants:     store.NewMerchantStore(pool),
 		APIKeys:       authStore,
@@ -72,6 +76,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, emitte
 		Payouts:       payoutStore,
 		Dashboard:     store.NewDashboardStore(pool),
 		Audit:         store.NewAuditStore(pool),
+		KeyCache:      authn,
 		Events:        emitter,
 		Processor:     proc,
 		StripeWebhook: webhook.NewStripeVerifier(cfg.StripeWebhookSecret),
@@ -82,19 +87,19 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, rdb *redis.Client, emitte
 	})
 
 	// Middleware.
-	authn := middleware.NewAuthenticator(authStore, jwtMgr, hasher, rdb)
 	limiter := ratelimit.NewRateLimiter(rdb)
 	rl := middleware.NewRateLimitMiddleware(limiter, cfg.RateLimitLiveRPM, cfg.RateLimitTestRPM, cfg.RateLimitDashboardRPM)
 	idem := middleware.NewIdempotency(rdb)
 
 	return api.NewRouter(api.RouterDeps{
-		Handlers:       h,
-		Auth:           authn,
-		RateLimit:      rl,
-		Idempotency:    idem,
-		AllowedOrigins: cfg.AllowedOrigins,
-		Health:         healthHandler(pool, rdb),
-		AuthRatePerMin: authRatePerMin,
+		Handlers:          h,
+		Auth:              authn,
+		RateLimit:         rl,
+		Idempotency:       idem,
+		AllowedOrigins:    cfg.AllowedOrigins,
+		Health:            healthHandler(pool, rdb),
+		AuthRatePerMin:    authRatePerMin,
+		TrustProxyHeaders: cfg.TrustProxyHeaders,
 	})
 }
 

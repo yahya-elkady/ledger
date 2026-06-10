@@ -63,7 +63,9 @@ func TestHashAndValidate(t *testing.T) {
 	h := auth.NewAPIKeyHasher(testSecret)
 
 	t.Run("hash is deterministic", func(t *testing.T) {
-		if h.Hash("sk_live_abc") != h.Hash("sk_live_abc") {
+		first := h.Hash("sk_live_abc")
+		second := h.Hash("sk_live_abc")
+		if first != second {
 			t.Error("hash should be deterministic for the same input")
 		}
 	})

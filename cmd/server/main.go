@@ -47,9 +47,11 @@ func run() error {
 	configureLogging(cfg)
 
 	// Root context cancelled on SIGINT/SIGTERM — propagates to startup work and
-	// long-lived clients.
+	// long-lived clients. The global logger is attached so log.Ctx works in
+	// background goroutines (dispatcher) that only receive this context.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx = log.Logger.WithContext(ctx)
 
 	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
@@ -147,4 +149,8 @@ func configureLogging(cfg *config.Config) {
 	if !cfg.IsProduction() {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 	}
+	// Safety net: log.Ctx(ctx) on a context with no attached logger falls back
+	// to the global logger instead of zerolog's disabled logger. Without this,
+	// every log.Ctx call on an unadorned context is silently discarded.
+	zerolog.DefaultContextLogger = &log.Logger
 }

@@ -68,6 +68,10 @@ func (m *Idempotency) Handler(next http.Handler) http.Handler {
 
 		// Replay a previously-captured response if present.
 		if cached, ok := m.lookup(r.Context(), cacheKey); ok {
+			// Idempotency keys are client-chosen request identifiers, not secrets.
+			log.Ctx(r.Context()).Info().Str("merchant_id", merchantID).
+				Str("idempotency_key", idemKey).Int("status", cached.Status).
+				Msg("idempotent replay")
 			if cached.ContentType != "" {
 				w.Header().Set("Content-Type", cached.ContentType)
 			}

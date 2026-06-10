@@ -165,6 +165,24 @@ func (f *fakeAPIKeys) RevokeAPIKey(_ context.Context, keyID, merchantID string) 
 	return &cp, nil
 }
 
+// fakeKeyCache records API-key cache evictions (revocation must evict).
+type fakeKeyCache struct {
+	mu      sync.Mutex
+	evicted []string
+}
+
+func (f *fakeKeyCache) InvalidateAPIKeyCache(_ context.Context, keyHash string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.evicted = append(f.evicted, keyHash)
+}
+
+func (f *fakeKeyCache) evictions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.evicted...)
+}
+
 // fakeCustomers is an in-memory CustomerStore (no pagination cursor logic — it
 // returns everything for the merchant, which is enough for these tests).
 type fakeCustomers struct {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"math/rand/v2"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // RetryPolicy controls how transient processor failures are retried. build.md
@@ -32,12 +34,22 @@ func Retry[T any](ctx context.Context, p RetryPolicy, fn func() (T, error)) (T, 
 	delay := p.BaseDelay
 	for attempt := 1; ; attempt++ {
 		result, err := fn()
-		if err == nil || !isRetryable(err) || attempt >= p.MaxAttempts {
+		if err == nil || !isRetryable(err) {
+			return result, err
+		}
+		if attempt >= p.MaxAttempts {
+			// Retries exhausted: the caller surfaces the error to the client; the
+			// trail of how many attempts were burned belongs here.
+			log.Ctx(ctx).Error().Err(err).Int("attempts", attempt).
+				Msg("processor call failed after exhausting retries")
 			return result, err
 		}
 
 		// Sleep with jitter before the next attempt, honoring cancellation.
+		// (math/rand jitter only spreads retry timing — it is not key material.)
 		sleep := delay + time.Duration(rand.Int64N(int64(delay)+1))
+		log.Ctx(ctx).Warn().Err(err).Int("attempt", attempt).Dur("backoff", sleep).
+			Msg("transient processor error, retrying")
 		select {
 		case <-ctx.Done():
 			return zero, ctx.Err()

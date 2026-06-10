@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
@@ -39,6 +41,13 @@ func (h *Handlers) CreateBankAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ProcessorAcctID == "" {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, "processor_acct_id is required", "processor_acct_id")
+		return
+	}
+	// Currency is optional on a bank account, but when present it must be a
+	// supported ISO 4217 code, normalized like every other money path.
+	req.Currency = strings.ToUpper(req.Currency)
+	if req.Currency != "" && !currency.ValidateCurrency(req.Currency) {
+		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, "currency must be a supported ISO 4217 code", "currency")
 		return
 	}
 	merchantID := middleware.MerchantID(r.Context())
@@ -92,6 +101,8 @@ func (h *Handlers) CreatePayout(w http.ResponseWriter, r *http.Request) {
 	if !bind(w, r, &req) {
 		return
 	}
+	// Normalize before validating so "usd" and "USD" persist identically.
+	req.Currency = strings.ToUpper(req.Currency)
 	if req.Amount <= 0 {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, "amount must be a positive integer", "amount")
 		return
@@ -107,41 +118,50 @@ func (h *Handlers) CreatePayout(w http.ResponseWriter, r *http.Request) {
 	merchantID := middleware.MerchantID(r.Context())
 	mode := middleware.Mode(r.Context())
 
-	bankAccount, err := h.bankAccounts.ListBankAccounts(r.Context(), merchantID)
+	bankAccounts, err := h.bankAccounts.ListBankAccounts(r.Context(), merchantID)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
 		return
 	}
-	processorAcctID := ""
-	for _, ba := range bankAccount {
+	var account *models.BankAccount
+	for _, ba := range bankAccounts {
 		if ba.ID == req.BankAccountID {
-			processorAcctID = ba.ProcessorAcctID
+			account = ba
 			break
 		}
 	}
-	if processorAcctID == "" {
+	if account == nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "bank account not found")
 		return
 	}
 
 	result, err := h.processor.CreatePayout(r.Context(), processor.PayoutRequest{
-		Processor: bankAccount[0].Processor, Amount: req.Amount, Currency: req.Currency,
-		Mode: mode, ProcessorAcctID: processorAcctID,
+		Processor: account.Processor, Amount: req.Amount, Currency: req.Currency,
+		Mode: mode, ProcessorAcctID: account.ProcessorAcctID,
 	})
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("processor", account.Processor).
+			Int64("amount", req.Amount).Str("currency", req.Currency).Str("mode", mode).
+			Msg("payout creation failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}
 
 	payout, err := h.payouts.CreatePayout(r.Context(), store.NewPayout{
 		MerchantID: merchantID, BankAccountID: req.BankAccountID, Amount: req.Amount, Currency: req.Currency,
-		Status: result.Status, Processor: bankAccount[0].Processor, ProcessorPayoutID: result.ProcessorPayoutID,
+		Status: result.Status, Processor: account.Processor, ProcessorPayoutID: result.ProcessorPayoutID,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"), Mode: mode, ArrivalDate: result.ArrivalDate,
 	})
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Msg("persisting payout failed after processor call")
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternalError, "internal error")
 		return
 	}
+	// Money trail: bank details are never logged — only the opaque account id.
+	log.Ctx(r.Context()).Info().Str("payout_id", payout.ID).Str("merchant_id", merchantID).
+		Int64("amount", payout.Amount).Str("currency", payout.Currency).
+		Str("processor", payout.Processor).Str("status", payout.Status).Str("mode", mode).
+		Msg("payout created")
 	h.auditMutation(r, "payout.created", "payouts", payout.ID)
 	respond.JSON(w, r, http.StatusCreated, payout)
 }

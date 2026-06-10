@@ -34,6 +34,10 @@ type RouterDeps struct {
 	Health         http.HandlerFunc
 	// AuthRatePerMin caps unauthenticated auth attempts (register/login) per IP.
 	AuthRatePerMin int
+	// TrustProxyHeaders derives the client IP from X-Forwarded-For. Enable ONLY
+	// behind a proxy/LB that always appends the real client IP; with no proxy it
+	// lets clients spoof their IP (rate-limit evasion, polluted audit IPs).
+	TrustProxyHeaders bool
 }
 
 // NewRouter builds the full /v1 route tree with the ordered middleware stack.
@@ -43,11 +47,16 @@ func NewRouter(d RouterDeps) http.Handler {
 	r := chi.NewRouter()
 
 	// Global stack (build.md middleware order): request id, real ip, structured
-	// request log, panic recovery (-> JSON 500), then CORS preflight handling.
+	// request log, panic recovery (-> JSON 500), body-size cap, security
+	// headers, then CORS preflight handling.
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	r.Use(realIP(d.TrustProxyHeaders))
 	r.Use(requestLogger)
 	r.Use(jsonRecoverer)
+	// Defense in depth: handlers also cap bodies they decode (bind /
+	// maxWebhookBody); this rejects oversized payloads on every route.
+	r.Use(chimw.RequestSize(maxRequestBody))
+	r.Use(securityHeaders)
 	r.Use(corsMiddleware(d.AllowedOrigins))
 
 	// Consistent JSON for unmatched routes / methods.
@@ -165,6 +174,45 @@ func NewRouter(d RouterDeps) http.Handler {
 	return r
 }
 
+// maxRequestBody caps any request body the API will accept (1 MiB) — the same
+// ceiling the JSON binder and webhook reader enforce locally.
+const maxRequestBody = 1 << 20
+
+// realIP optionally rewrites r.RemoteAddr from X-Forwarded-For. It deliberately
+// replaces chi's deprecated RealIP middleware, which trusted the LEFTMOST
+// forwarded hop — a client-controlled value (GHSA-3fxj-6jh8-hvhx) that would let
+// callers spoof their IP past per-IP rate limits and into audit logs.
+//
+// With trust off (the default), the TCP peer address is used as-is. With trust
+// on — valid only behind a proxy/LB that always APPENDS the real client IP —
+// the RIGHTMOST X-Forwarded-For entry (the one our own proxy wrote) is used.
+func realIP(trustProxyHeaders bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if !trustProxyHeaders {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+				hops := strings.Split(xff, ",")
+				if ip := strings.TrimSpace(hops[len(hops)-1]); ip != "" {
+					r.RemoteAddr = ip
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// securityHeaders sets baseline hardening headers on every response. The API
+// serves JSON only, so content sniffing and framing are never legitimate.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // apiKeyScoped applies the standard API-key middleware chain to a route group:
 // API-key auth, mode enforcement, per-identity rate limiting, and a minimum
 // scope. POST routes additionally add idempotency at the route via r.With.
@@ -207,8 +255,15 @@ func bearerToken(r *http.Request) (string, bool) {
 // requestLogger logs one structured line per request and records HTTP metrics.
 // It logs request_id, method, path, status, latency_ms, and — once auth has run
 // — merchant_id and mode. It never logs the body or the Authorization header.
+//
+// It also attaches a request-scoped logger (carrying request_id) to the request
+// context, so every downstream log.Ctx(r.Context()) call in middleware and
+// handlers automatically includes the request id.
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqLogger := log.Logger.With().Str("request_id", chimw.GetReqID(r.Context())).Logger()
+		r = r.WithContext(reqLogger.WithContext(r.Context()))
+
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 		start := time.Now()
 		next.ServeHTTP(ww, r)
@@ -222,8 +277,7 @@ func requestLogger(next http.Handler) http.Handler {
 		}
 		metrics.HTTPRequest(r.Method, pattern, ww.Status(), latency)
 
-		ev := log.Info().
-			Str("request_id", chimw.GetReqID(r.Context())).
+		ev := reqLogger.Info().
 			Str("method", r.Method).
 			Str("path", r.URL.Path).
 			Int("status", ww.Status()).
@@ -249,8 +303,7 @@ func jsonRecoverer(next http.Handler) http.Handler {
 				if rec == http.ErrAbortHandler {
 					panic(rec)
 				}
-				log.Error().
-					Str("request_id", chimw.GetReqID(r.Context())).
+				log.Ctx(r.Context()).Error().
 					Interface("panic", rec).
 					Bytes("stack", debug.Stack()).
 					Msg("recovered from panic")

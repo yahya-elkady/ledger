@@ -2,7 +2,7 @@
 
 A production-shaped, Stripe-like **payments backend in Go**, backed by **PostgreSQL** and **Redis**. It exposes a REST API that wraps **Stripe** (cards, charges, subscriptions, payouts) and **Plaid** (ACH bank transfers) behind one consistent, multi-tenant, multi-currency interface — with API-key and JWT auth, idempotency, rate limiting, test/live isolation, webhooks, and PCI-DSS annotations throughout.
 
-> **Status:** built in phases. Phases 1–12 are complete: scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, the multi-currency helpers, verified test/live mode isolation (with a `make seed-test` fixture loader), the assembled chi router (ordered middleware, CORS, JSON 404/405, inbound Stripe webhook verifier), observability (structured request logs + Prometheus `/metrics`), the test suite (unit + a dockertest end-to-end suite), and Docker/Compose deployment (multi-stage non-root image, one-shot migration runner). Remaining: the final review & hardening pass.
+> **Status:** all 14 build phases complete — scaffold, schema, auth, rate-limiting/idempotency, the full API handler layer, the real Stripe/Plaid processor adapters, the outbound webhook dispatcher, multi-currency helpers, verified test/live mode isolation, the assembled chi router, observability, the test suite (unit + dockertest end-to-end), Docker/Compose deployment, and a **final security review & hardening pass** (findings, fixes, and residual risks documented in [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md)).
 
 It sits on top of a small, self-contained **double-entry ledger** (`internal/ledger`, `internal/payment`) — the original core this project grew from — which models balanced money movement independently of any processor.
 
@@ -109,7 +109,9 @@ make run                      # start the HTTP server (GET /health to check)
 go run ./cmd/smoke            # double-entry ledger demo against Postgres
 ```
 
-Configuration is entirely environment-driven (`internal/config`); the loader fails fast if a required secret is missing or too short, and never accepts hardcoded secrets. See [`.env.example`](.env.example) for the full variable reference.
+Configuration is entirely environment-driven (`internal/config`); the loader fails fast if a required secret is missing or too short (and refuses `sslmode=disable` in production), and never accepts hardcoded secrets. See [`.env.example`](.env.example) for the full variable reference.
+
+> **Behind a load balancer:** set `TRUST_PROXY_HEADERS=true` so per-IP rate limits and audit logs use the real client IP from `X-Forwarded-For` (rightmost hop). Leave it `false` (the default) when clients connect directly — otherwise they can spoof their IP.
 
 ### Database & migrations
 

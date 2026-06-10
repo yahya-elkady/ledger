@@ -16,7 +16,7 @@ import (
 // secret at the given unix timestamp: "t=<ts>,v1=<hex hmac of ts.payload>".
 func stripeSigHeader(payload []byte, secret string, ts int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	fmt.Fprintf(mac, "%d.%s", ts, payload)
+	_, _ = fmt.Fprintf(mac, "%d.%s", ts, payload)
 	return "t=" + strconv.FormatInt(ts, 10) + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 

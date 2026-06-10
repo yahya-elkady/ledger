@@ -88,7 +88,6 @@ func TestProcessorErrorShape(t *testing.T) {
 type muxStub struct {
 	name      string
 	seen      *string
-	declines  bool
 	subsCalls *int
 }
 
@@ -113,7 +112,7 @@ func (s muxStub) CreateSubscription(_ context.Context, _ processor.SubscriptionR
 	return processor.SubscriptionResult{ProcessorSubID: "sub_x", Status: "active"}, nil
 }
 func (s muxStub) CancelSubscription(_ context.Context, _ string, _ bool, _ string) error { return nil }
-func (s muxStub) UpdateSubscription(_ context.Context, _, _, _ string) error              { return nil }
+func (s muxStub) UpdateSubscription(_ context.Context, _, _, _ string) error             { return nil }
 
 func TestMuxRoutesByProcessorName(t *testing.T) {
 	var seen string

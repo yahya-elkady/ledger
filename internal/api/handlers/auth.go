@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/yahya-elkady/ledger/internal/api/respond"
 	"github.com/yahya-elkady/ledger/internal/auth"
 	"github.com/yahya-elkady/ledger/internal/models"
@@ -110,9 +112,13 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	merchant, passwordHash, err := h.merchants.GetMerchantByEmail(r.Context(), req.Email)
 	if err != nil || !auth.CheckPassword(req.Password, passwordHash) {
+		// Abuse signal. The email is NOT logged (PII + enumeration aid); the IP
+		// is enough to correlate brute-force attempts with the rate limiter.
+		log.Ctx(r.Context()).Warn().Str("ip", clientIP(r)).Msg("auth failure: login rejected")
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeAuthenticationRequired, "invalid email or password")
 		return
 	}
+	log.Ctx(r.Context()).Info().Str("merchant_id", merchant.ID).Msg("merchant login")
 
 	tokens, err := h.issueTokens(r, merchant)
 	if err != nil {
@@ -167,10 +173,15 @@ func (h *Handlers) Refresh(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:  newRefresh.ExpiresAt,
 	}
 	if err := h.tokens.RotateRefreshToken(r.Context(), oldHash, next); err != nil {
-		// Token absent or already revoked → treat as invalid (possible reuse).
+		// Token absent or already revoked → possible refresh-token replay/theft;
+		// this is a security event, not routine noise.
+		log.Ctx(r.Context()).Warn().Str("merchant_id", merchant.ID).Str("ip", clientIP(r)).
+			Msg("auth failure: refresh token reuse or unknown token rejected")
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeAuthenticationRequired, "invalid refresh token")
 		return
 	}
+	log.Ctx(r.Context()).Info().Str("merchant_id", merchant.ID).Str("jti", newRefresh.JTI).
+		Msg("refresh token rotated")
 
 	respond.JSON(w, r, http.StatusOK, tokenResponse{
 		AccessToken:  access,
@@ -188,7 +199,11 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if claims, err := h.jwt.ParseRefreshToken(req.RefreshToken); err == nil {
-		_ = h.tokens.RevokeRefreshTokenByJTI(r.Context(), claims.ID)
+		if err := h.tokens.RevokeRefreshTokenByJTI(r.Context(), claims.ID); err == nil {
+			log.Ctx(r.Context()).Info().Str("merchant_id", claims.MerchantID).
+				Str("jti", claims.ID).Msg("merchant logout: refresh token revoked")
+		}
+		// Unknown/already-revoked token: logout stays idempotent and silent.
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -220,10 +235,18 @@ func (h *Handlers) issueTokens(r *http.Request, merchant *models.Merchant) (toke
 	}, nil
 }
 
-// writeAudit records an audit entry, logging (not failing) on error so auditing
-// never blocks the primary operation.
+// writeAudit records an audit entry and mirrors it as a structured INFO log, so
+// every mutation leaves both a DB trail and a log trail. An audit-write failure
+// is logged at ERROR (it must be investigated) but never blocks the primary
+// operation that already committed.
 func (h *Handlers) writeAudit(r *http.Request, e store.AuditEntry) {
-	_ = h.audit.WriteAuditLog(r.Context(), e)
+	log.Ctx(r.Context()).Info().Str("action", e.Action).Str("resource", e.Resource).
+		Str("resource_id", e.ResourceID).Str("merchant_id", e.MerchantID).
+		Str("actor_type", e.ActorType).Msg("mutation")
+	if err := h.audit.WriteAuditLog(r.Context(), e); err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("action", e.Action).
+			Str("resource_id", e.ResourceID).Msg("audit log write failed")
+	}
 }
 
 // validateRegister checks registration input, returning (message, param, ok).

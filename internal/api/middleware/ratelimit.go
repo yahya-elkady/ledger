@@ -110,6 +110,10 @@ func (m *RateLimitMiddleware) enforce(w http.ResponseWriter, r *http.Request, ne
 
 	if !allowed {
 		metrics.RateLimitHit(clientType(r.Context()), Mode(r.Context()))
+		// Abuse-detection signal: who is hammering, and at what limit.
+		log.Ctx(r.Context()).Warn().Str("bucket", key).Int("limit", limit).
+			Str("client_type", clientType(r.Context())).Str("merchant_id", MerchantID(r.Context())).
+			Msg("rate limit exceeded")
 		retryAfter := int(math.Ceil(info.RetryAfter.Seconds()))
 		if retryAfter < 1 {
 			retryAfter = 1

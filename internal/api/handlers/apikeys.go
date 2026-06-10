@@ -119,14 +119,18 @@ func (h *Handlers) GetAPIKey(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, r, http.StatusOK, toAPIKeyResponse(rec))
 }
 
-// DeleteAPIKey revokes a key (soft delete + cache eviction handled by the caller
-// that holds the Authenticator; here we just revoke in the store).
+// DeleteAPIKey revokes a key: soft delete in the store, then immediate Redis
+// cache eviction so the revoked key cannot authenticate for the rest of the
+// auth-cache TTL.
 func (h *Handlers) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	merchantID := middleware.MerchantID(r.Context())
 	rec, err := h.apiKeys.RevokeAPIKey(r.Context(), chi.URLParam(r, "id"), merchantID)
 	if err != nil {
 		respondNotFoundOr500(w, r, err, store.ErrAPIKeyNotFound, "api key not found")
 		return
+	}
+	if h.keyCache != nil {
+		h.keyCache.InvalidateAPIKeyCache(r.Context(), rec.KeyHash)
 	}
 
 	actorType, actorID := auditActor(r.Context())

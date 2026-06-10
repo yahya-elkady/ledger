@@ -3,9 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/yahya-elkady/ledger/internal/api/middleware"
 	"github.com/yahya-elkady/ledger/internal/api/respond"
@@ -33,6 +35,8 @@ func (h *Handlers) CreatePlan(w http.ResponseWriter, r *http.Request) {
 	if !bind(w, r, &req) {
 		return
 	}
+	// Normalize before validating so "usd" and "USD" persist identically.
+	req.Currency = strings.ToUpper(req.Currency)
 	if msg, param, ok := validatePlan(req); !ok {
 		respond.ErrorParam(w, r, http.StatusBadRequest, respond.CodeValidationError, msg, param)
 		return
@@ -49,6 +53,9 @@ func (h *Handlers) CreatePlan(w http.ResponseWriter, r *http.Request) {
 		Interval: req.Interval, IntervalCount: count, Mode: mode,
 	})
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Int64("amount", req.Amount).
+			Str("currency", req.Currency).Str("mode", mode).
+			Msg("plan creation failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}
@@ -129,6 +136,8 @@ func (h *Handlers) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 		ProcessorPlanID: plan.ProcessorPlanID, ProcessorMethodID: req.PaymentMethodID, Mode: mode, TrialEnd: trialEnd,
 	})
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("plan_id", req.PlanID).Str("mode", mode).
+			Msg("subscription creation failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}
@@ -189,6 +198,9 @@ func (h *Handlers) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.processor.CancelSubscription(r.Context(), sub.ProcessorSubID, req.AtPeriodEnd, mode); err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Str("subscription_id", sub.ID).
+			Bool("at_period_end", req.AtPeriodEnd).Str("mode", mode).
+			Msg("subscription cancellation failed at processor")
 		respond.Error(w, r, http.StatusBadGateway, respond.CodeProcessorError, "payment processor error")
 		return
 	}

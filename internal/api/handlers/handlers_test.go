@@ -37,6 +37,7 @@ type harness struct {
 	payouts       *fakePayouts
 	dashboard     *fakeDashboard
 	audit         *fakeAudit
+	keyCache      *fakeKeyCache
 	processor     *processor.Fake
 	stripeHook    *webhook.Fake
 	events        *fakeEmitter
@@ -80,6 +81,7 @@ func newHarness(t *testing.T) *harness {
 	dash := &fakeDashboard{}
 	hook := &webhook.Fake{}
 	em := &fakeEmitter{}
+	kc := &fakeKeyCache{}
 	h := handlers.New(handlers.Deps{
 		Merchants:     m,
 		APIKeys:       ak,
@@ -92,6 +94,7 @@ func newHarness(t *testing.T) *harness {
 		Payouts:       po,
 		Dashboard:     dash,
 		Audit:         au,
+		KeyCache:      kc,
 		Events:        em,
 		Processor:     proc,
 		StripeWebhook: hook,
@@ -102,7 +105,7 @@ func newHarness(t *testing.T) *harness {
 	return &harness{
 		h: h, merchants: m, apiKeys: ak, tokens: tk, customers: cu, charges: ch,
 		plans: pl, subscriptions: sub, bankAccounts: ba, payouts: po, dashboard: dash,
-		audit: au, processor: proc, stripeHook: hook, events: em, jwt: jwtMgr,
+		audit: au, keyCache: kc, processor: proc, stripeHook: hook, events: em, jwt: jwtMgr,
 	}
 }
 
@@ -287,6 +290,12 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	got := strings.Join(h.audit.actions(), ",")
 	if !strings.Contains(got, "apikey.created") || !strings.Contains(got, "apikey.revoked") {
 		t.Errorf("audit actions = %q, want create+revoke", got)
+	}
+
+	// Revocation must evict the auth cache, or the dead key keeps working
+	// until the cache TTL expires.
+	if evictions := h.keyCache.evictions(); len(evictions) != 1 {
+		t.Errorf("cache evictions after revoke = %d, want 1", len(evictions))
 	}
 }
 

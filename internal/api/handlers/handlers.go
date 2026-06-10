@@ -114,6 +114,13 @@ type AuditLogger interface {
 	WriteAuditLog(ctx context.Context, e store.AuditEntry) error
 }
 
+// APIKeyCacheInvalidator evicts a cached API-key lookup, so a revoked key stops
+// authenticating immediately instead of riding out the cache TTL. The
+// middleware.Authenticator satisfies it in production.
+type APIKeyCacheInvalidator interface {
+	InvalidateAPIKeyCache(ctx context.Context, keyHash string)
+}
+
 // EventEmitter queues outbound webhook events for merchant endpoints. The
 // webhook.Dispatcher satisfies it in production; it only persists pending
 // deliveries (the background loop does the HTTP), so calling it inline is
@@ -136,6 +143,7 @@ type Handlers struct {
 	payouts       PayoutStore
 	dashboard     DashboardStore
 	audit         AuditLogger
+	keyCache      APIKeyCacheInvalidator
 	events        EventEmitter
 	processor     processor.Processor
 	stripeWebhook webhook.Verifier
@@ -159,6 +167,7 @@ type Deps struct {
 	Payouts       PayoutStore
 	Dashboard     DashboardStore
 	Audit         AuditLogger
+	KeyCache      APIKeyCacheInvalidator
 	Events        EventEmitter
 	Processor     processor.Processor
 	StripeWebhook webhook.Verifier
@@ -182,6 +191,7 @@ func New(d Deps) *Handlers {
 		payouts:       d.Payouts,
 		dashboard:     d.Dashboard,
 		audit:         d.Audit,
+		keyCache:      d.KeyCache,
 		events:        d.Events,
 		processor:     d.Processor,
 		stripeWebhook: d.StripeWebhook,

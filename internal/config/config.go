@@ -9,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -50,10 +51,10 @@ type Config struct {
 	StripeWebhookSecret string `env:"STRIPE_WEBHOOK_SECRET"`
 
 	// Plaid — optional in development.
-	PlaidClientID     string `env:"PLAID_CLIENT_ID"`
-	PlaidSecretLive   string `env:"PLAID_SECRET_LIVE"`
+	PlaidClientID      string `env:"PLAID_CLIENT_ID"`
+	PlaidSecretLive    string `env:"PLAID_SECRET_LIVE"`
 	PlaidSecretSandbox string `env:"PLAID_SECRET_SANDBOX"`
-	PlaidEnv          string `env:"PLAID_ENV" envDefault:"sandbox"`
+	PlaidEnv           string `env:"PLAID_ENV" envDefault:"sandbox"`
 
 	// Outbound webhook delivery.
 	WebhookSigningSecret   string `env:"WEBHOOK_SIGNING_SECRET,required"`
@@ -67,6 +68,11 @@ type Config struct {
 
 	// CORS — comma-separated allowlist of origins for the dashboard API.
 	AllowedOrigins []string `env:"ALLOWED_ORIGINS" envSeparator:","`
+
+	// TrustProxyHeaders derives client IPs from X-Forwarded-For. Enable ONLY
+	// behind a proxy/load balancer that always appends the real client IP;
+	// otherwise clients can spoof their IP (rate-limit evasion, bad audit IPs).
+	TrustProxyHeaders bool `env:"TRUST_PROXY_HEADERS" envDefault:"false"`
 }
 
 // Load reads .env (best-effort, for local development) and then parses the
@@ -111,6 +117,11 @@ func (c *Config) WebhookRetryBackoff() time.Duration {
 func (c *Config) validate() error {
 	if c.JWTAccessSecret == c.JWTRefreshSecret {
 		return fmt.Errorf("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ")
+	}
+	// Unencrypted DB connections are a development-only convenience; fail fast
+	// rather than ship payment data over plaintext in production.
+	if c.IsProduction() && strings.Contains(c.DatabaseURL, "sslmode=disable") {
+		return fmt.Errorf("DATABASE_URL must not use sslmode=disable when ENV=production")
 	}
 	const minSecretLen = 32
 	for name, secret := range map[string]string{
