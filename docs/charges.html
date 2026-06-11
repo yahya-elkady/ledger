@@ -137,6 +137,34 @@ same idempotency key).</p>
 <p><strong>Webhooks emitted:</strong> <code>charge.succeeded</code> or
 <code>charge.failed</code>.</p>
 
+<h3 class="anchor-h" id="test-cards">Test cards</h3>
+<p>In <strong>test mode</strong> with <code>"processor": "stripe"</code>, pass one of Stripe's
+shared test payment-method tokens as <code>payment_method_id</code> — no card numbers, and no
+need to tokenize anything first. The "declined" tokens produce a <code>201</code> with
+<code>"status": "failed"</code> and the matching <code>failure_code</code>, so you can exercise
+your failure handling end to end.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Token</th><th>Outcome</th><th><code>failure_code</code></th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">pm_card_visa</td><td>Succeeds (Visa)</td><td>—</td></tr>
+    <tr><td class="field-name">pm_card_mastercard</td><td>Succeeds (Mastercard)</td><td>—</td></tr>
+    <tr><td class="field-name">pm_card_amex</td><td>Succeeds (Amex)</td><td>—</td></tr>
+    <tr><td class="field-name">pm_card_chargeDeclined</td><td>Generic decline</td><td><code>card_declined</code></td></tr>
+    <tr><td class="field-name">pm_card_chargeDeclinedInsufficientFunds</td><td>Decline — no funds</td><td><code>insufficient_funds</code></td></tr>
+    <tr><td class="field-name">pm_card_chargeDeclinedLostCard</td><td>Decline — lost card</td><td><code>lost_card</code></td></tr>
+    <tr><td class="field-name">pm_card_authenticationRequired</td><td>Requires 3-D Secure authentication</td><td><code>authentication_required</code></td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout note">
+  <span class="callout-title">These are Stripe's tokens, in test mode only</span>
+  <p>The full catalogue lives in Stripe's
+  <a href="https://docs.stripe.com/testing">testing docs</a>. They only work against the test
+  Stripe key — a live charge needs a real tokenized method from Stripe Elements. For ACH
+  (<code>"processor": "plaid"</code>), use Plaid's Sandbox account tokens instead.</p>
+</div>
+
 <h2>List charges</h2>
 <div class="endpoint"><span class="method get">GET</span><span class="path">/v1/charges</span></div>
 <div class="table-wrap">

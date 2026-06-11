@@ -251,6 +251,92 @@ half-configured.</p>
     cover request latency, charge volume, rate-limit hits, and webhook delivery outcomes.</li>
 </ul>
 
+<h2 class="anchor-h" id="hosting">Hosting on a server</h2>
+<p>The checklist above is the <em>what</em>; here's a concrete <em>how</em> for a single Linux
+host. The app speaks plain HTTP on <code>:8080</code> — a reverse proxy terminates TLS in front
+of it and is what makes processor webhooks reachable.</p>
+
+<ol class="steps">
+  <li>
+    <h3>Make the bundled compose production-ready</h3>
+    <p>The shipped <code>docker-compose.yml</code> is a <em>development</em> stack: it hardcodes
+    <code>ENV: development</code> and <code>sslmode=disable</code> on the <code>api</code> service,
+    declares no restart policy, and doesn't pass the processor / CORS / proxy variables. Don't run
+    it as-is in production. Layer a <code>docker-compose.prod.yml</code> override that supplies the
+    real settings and a restart policy:</p>
+<pre><code># docker-compose.prod.yml
+services:
+  api:
+    restart: unless-stopped
+    environment:
+      ENV: production
+      DATABASE_URL: ${DATABASE_URL}          # …?sslmode=require
+      TRUST_PROXY_HEADERS: "true"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      STRIPE_SECRET_KEY_LIVE: ${STRIPE_SECRET_KEY_LIVE}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      # …plus the Plaid + rate-limit vars from the reference above
+  postgres:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped</code></pre>
+    <p>Then launch detached so it survives your SSH session and reboots:</p>
+<pre><code>docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose ps          # check health
+docker compose logs -f api # tail the API</code></pre>
+    <p>On a host without Docker, run <code>make build</code> and supervise
+    <code>./bin/server</code> with a systemd unit (<code>Restart=always</code>,
+    <code>EnvironmentFile=/etc/ledger/ledger.env</code>) — same idea, different supervisor.</p>
+  </li>
+  <li>
+    <h3>Terminate TLS at a reverse proxy</h3>
+    <p>Point a domain's DNS at the host, then let Caddy handle HTTPS (it provisions and renews
+    Let's Encrypt certs automatically). A complete <code>Caddyfile</code>:</p>
+<pre><code>api.example.com {
+    reverse_proxy localhost:8080
+    # Block the unauthenticated Prometheus endpoint from the public internet:
+    @metrics path /metrics
+    respond @metrics 404
+}</code></pre>
+    <p>Because the app now sits behind a proxy that appends the real client IP, set
+    <code>TRUST_PROXY_HEADERS=true</code> and <code>ENV=production</code> (which also forces
+    <code>sslmode=require</code> to Postgres). The equivalent nginx is a
+    <code>proxy_pass http://127.0.0.1:8080;</code> server block with a <code>location /metrics
+    { deny all; }</code>.</p>
+  </li>
+  <li>
+    <h3>Wire up processor webhooks</h3>
+    <p>Stripe and Plaid can't reach <code>localhost</code> — they need the public HTTPS URL from
+    step 2. In each dashboard, register the endpoints and copy the signing secrets into your
+    environment:</p>
+<pre><code>Stripe → Developers → Webhooks → add endpoint:
+    https://api.example.com/v1/webhooks/stripe   → STRIPE_WEBHOOK_SECRET (whsec_…)
+Plaid → Team Settings → Webhooks:
+    https://api.example.com/v1/webhooks/plaid</code></pre>
+    <p>Without these, async settlement never lands: ACH charges stay <code>pending</code> and
+    payouts never reach <code>paid</code>/<code>failed</code>.</p>
+  </li>
+</ol>
+
+<div class="callout tip">
+  <span class="callout-title">Testing webhooks before you have a domain</span>
+  <p>You don't need to deploy to test inbound webhooks. The Stripe CLI forwards live test events
+  to your local server:</p>
+<pre><code>stripe listen --forward-to localhost:8080/v1/webhooks/stripe
+# prints a whsec_… — use it as STRIPE_WEBHOOK_SECRET locally
+stripe trigger charge.succeeded</code></pre>
+  <p>For your <em>outbound</em> merchant webhooks, point an endpoint at a request-capture service
+  (e.g. webhook.site) to inspect the signed payloads and headers described in
+  <a href="webhooks.html">Webhooks</a>.</p>
+</div>
+
+<div class="callout warning">
+  <span class="callout-title">Back up the database</span>
+  <p>Postgres holds the money. Schedule <code>pg_dump</code> off the host (or use your provider's
+  managed-Postgres snapshots) <em>before</em> taking live traffic — Redis is disposable, Postgres
+  is not. Never run the API against a database you can't restore.</p>
+</div>
+
 <h2>What can you build on this API?</h2>
 <div class="card-grid">
   <div class="card">
