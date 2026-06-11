@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">API Reference</div>
+<h1>Dashboard</h1>
+<p class="lead">
+  Read-only aggregates for building a merchant dashboard UI: headline numbers and a unified
+  transaction feed. JWT-only, and scoped to the mode carried by the token.
+</p>
+<div class="meta-row">
+  <span class="pill auth">JWT only</span>
+  <span class="pill mode">mode-isolated</span>
+</div>
+
+<h2>Overview</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/dashboard/overview</span></div>
+<p><strong>Returns</strong> <code>200</code> with current aggregates for your merchant in the
+token's mode:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">mode</td><td class="field-type">string</td><td>The mode these numbers cover.</td></tr>
+    <tr><td class="field-name">charge_count</td><td class="field-type">int</td><td>All charges, any status.</td></tr>
+    <tr><td class="field-name">charge_succeeded</td><td class="field-type">int</td><td>Count of succeeded charges.</td></tr>
+    <tr><td class="field-name">charge_failed</td><td class="field-type">int</td><td>Count of failed charges.</td></tr>
+    <tr><td class="field-name">gross_volume</td><td class="field-type">int</td><td>Sum of succeeded charge amounts, minor units.</td></tr>
+    <tr><td class="field-name">active_subscriptions</td><td class="field-type">int</td><td>Currently active subscriptions.</td></tr>
+    <tr><td class="field-name">pending_payouts</td><td class="field-type">int</td><td>Payouts not yet settled.</td></tr>
+    <tr><td class="field-name">recent_failed_charges</td><td class="field-type">charge[]</td><td>Up to 10 most recent failed charges, for an "attention needed" panel.</td></tr>
+  </tbody>
+</table>
+</div>
+<pre><code>curl http://localhost:8080/v1/dashboard/overview \
+  -H "Authorization: Bearer $ACCESS_TOKEN"</code></pre>
+<pre><code>{
+  "mode": "test",
+  "charge_count": 128,
+  "charge_succeeded": 119,
+  "charge_failed": 9,
+  "gross_volume": 482350,
+  "active_subscriptions": 23,
+  "pending_payouts": 2,
+  "recent_failed_charges": [ { "id": "…", "status": "failed", "failure_code": "card_declined", … } ]
+}</code></pre>
+
+<h2>Transactions</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/dashboard/transactions</span></div>
+<p>A paginated transaction feed (currently surfaces charges — the primary transaction type).
+Accepts the same filters as <a href="charges.html">List charges</a>:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Query param</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">status</td><td><span class="pill opt">optional</span></td><td>e.g. <code>succeeded</code>, <code>failed</code>, <code>refunded</code>.</td></tr>
+    <tr><td class="field-name">limit</td><td><span class="pill opt">optional</span></td><td>Default 20, max 100.</td></tr>
+    <tr><td class="field-name">cursor</td><td><span class="pill opt">optional</span></td><td>From the previous <code>next_cursor</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with
+<code>{"data": [charge, …], "next_cursor": "…"}</code>.</p>
+
+<div class="callout note">
+  <span class="callout-title">Building a dashboard?</span>
+  <p>Pair these endpoints with <a href="customers.html">Customers</a> (JWTs work there too) and
+  <a href="apikeys.html">API Keys</a> for a complete self-serve merchant portal — register,
+  login, mint keys, watch the money. Dashboard JWT traffic is limited to 300 requests/min per
+  merchant by default, comfortable for a SPA.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

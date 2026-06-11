@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Errors &amp; Conventions · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">Core Concepts</div>
+<h1>Errors &amp; Conventions</h1>
+<p class="lead">
+  One error envelope, one pagination scheme, one money format — everywhere.
+  Learn these once and every endpoint behaves the same way.
+</p>
+
+<h2>The error envelope</h2>
+<p>Every error — from any endpoint, any middleware, even unmatched routes and panics — uses
+this JSON shape:</p>
+<pre><code>{
+  "error":      "validation_error",            // machine-readable code (table below)
+  "message":    "amount must be a positive integer (minor units)",
+  "param":      "amount",                      // only on validation errors: the offending field
+  "request_id": "b3f1c2…"                      // echo this when reporting issues — it links to server logs
+}</code></pre>
+
+<h2>Error codes</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Code</th><th>HTTP</th><th>Meaning / what to do</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">validation_error</td><td>400</td><td>A field is missing, malformed, or unknown (unknown JSON fields are rejected). Check <code>param</code> and <code>message</code>, fix, resend.</td></tr>
+    <tr><td class="field-name">idempotency_key_required</td><td>400</td><td>An authenticated <code>POST</code> was sent without an <code>Idempotency-Key</code> header.</td></tr>
+    <tr><td class="field-name">authentication_required</td><td>401</td><td>Missing or invalid credential. For login this is also the generic "wrong email or password".</td></tr>
+    <tr><td class="field-name">invalid_api_key</td><td>401</td><td>Key is unknown, revoked, or expired (deliberately indistinguishable). Mint a new key.</td></tr>
+    <tr><td class="field-name">token_expired</td><td>401</td><td>Access token past its TTL. Call <code>POST /v1/auth/refresh</code> and retry.</td></tr>
+    <tr><td class="field-name">insufficient_scope</td><td>403</td><td>The key authenticated but lacks the route's minimum scope (<a href="authentication.html">scope table</a>).</td></tr>
+    <tr><td class="field-name">not_found</td><td>404</td><td>No such resource <em>for your merchant and mode</em> — cross-mode and cross-merchant access also looks like 404.</td></tr>
+    <tr><td class="field-name">method_not_allowed</td><td>405</td><td>The path exists but not for this HTTP method.</td></tr>
+    <tr><td class="field-name">idempotency_conflict</td><td>409</td><td>This idempotency key was already used for a different, still-in-flight or stored write. Also: <code>409 validation_error</code> on duplicate registration email.</td></tr>
+    <tr><td class="field-name">rate_limit_exceeded</td><td>429</td><td>Too many requests. Body includes <code>retry_after</code> (seconds); also sent as a <code>Retry-After</code> header.</td></tr>
+    <tr><td class="field-name">internal_error</td><td>500</td><td>Unexpected server-side failure. Safe to retry with the same idempotency key; report the <code>request_id</code>.</td></tr>
+    <tr><td class="field-name">processor_error</td><td>502</td><td>Stripe/Plaid was unreachable or errored after retries. The write did not happen — retry later with the same idempotency key. Note: a <em>card decline is not</em> a processor_error; it returns <code>201</code> with a <code>failed</code> charge.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 class="anchor-h" id="idempotency">Idempotency</h2>
+<p>Every authenticated <code>POST</code> (create charge, create customer, refund, cancel, …)
+requires an <code>Idempotency-Key</code> header. Auth endpoints
+(<code>/v1/auth/*</code>) and inbound webhooks are exempt.</p>
+<ul>
+  <li>Use a unique random string per <em>logical</em> operation — UUIDv4 is perfect.</li>
+  <li>The first request executes; its response is cached for <strong>24 hours</strong>.</li>
+  <li>Any retry with the same key (same merchant) replays the cached status + body verbatim and
+    adds the header <code>Idempotency-Replayed: true</code>.</li>
+  <li>Server errors (5xx) are <em>not</em> cached — you can retry those for a fresh attempt.</li>
+  <li>A database uniqueness backstop on charges/payouts returns
+    <code>409 idempotency_conflict</code> if a duplicate ever races past the cache.</li>
+</ul>
+<pre><code>POST /v1/charges
+Idempotency-Key: 0c5b2a4e-9f3d-4e5a-8c7b-1a2b3c4d5e6f
+…network drops, you never saw the response…
+
+POST /v1/charges                      ← identical retry, same key
+Idempotency-Key: 0c5b2a4e-9f3d-4e5a-8c7b-1a2b3c4d5e6f
+→ 201, Idempotency-Replayed: true     ← the customer was charged exactly once</code></pre>
+
+<h2 class="anchor-h" id="rate-limits">Rate limiting</h2>
+<p>Limits are per identity over a sliding 60-second window:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Identity</th><th>Default limit</th><th>Bucket</th></tr></thead>
+  <tbody>
+    <tr><td>Live-mode API key</td><td>1000 req/min</td><td>per key</td></tr>
+    <tr><td>Test-mode API key</td><td>100 req/min</td><td>per key</td></tr>
+    <tr><td>Dashboard (JWT)</td><td>300 req/min</td><td>per merchant</td></tr>
+    <tr><td>Register / login</td><td>10 req/min</td><td>per IP</td></tr>
+  </tbody>
+</table>
+</div>
+<p>(Operators can tune these — see <a href="dev-setup.html#env">environment variables</a>.)
+Every response on a limited route carries:</p>
+<pre><code>X-RateLimit-Limit:     100        # your limit for this window
+X-RateLimit-Remaining: 97         # requests left
+X-RateLimit-Reset:     1760000000 # unix seconds when the window resets</code></pre>
+<p>Exceeding the limit returns <code>429</code> with a <code>Retry-After</code> header and:</p>
+<pre><code>{ "error": "rate_limit_exceeded", "message": "rate limit exceeded", "retry_after": 12, "request_id": "…" }</code></pre>
+<p>Honor <code>retry_after</code> with backoff rather than hammering — repeated 429s are logged
+as an abuse signal.</p>
+
+<h2 class="anchor-h" id="pagination">Pagination</h2>
+<p>List endpoints return a collection envelope:</p>
+<pre><code>{ "data": [ … ], "next_cursor": "opaque-token" }</code></pre>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Query param</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">limit</td><td class="field-type">int</td><td>Page size. Default <strong>20</strong>, max <strong>100</strong> (silently clamped).</td></tr>
+    <tr><td class="field-name">cursor</td><td class="field-type">string</td><td>The previous response's <code>next_cursor</code>. Opaque — don't construct or decode it. A garbled cursor returns <code>400 validation_error</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>When <code>next_cursor</code> is absent or empty, you've reached the end. Cursor pagination
+applies to customers, charges, subscriptions, payouts, and dashboard transactions; plans and
+bank accounts return the full list. Charges and subscriptions also accept a
+<code>?status=</code> filter.</p>
+
+<h2 class="anchor-h" id="currencies">Money &amp; currencies</h2>
+<p><strong>Amounts are always integers in the currency's minor unit.</strong> No decimals, no
+floats, ever. The API validates every <code>amount</code> + <code>currency</code> pair and never
+performs FX conversion.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Code</th><th>Currency</th><th>Minor units</th><th>1000 means</th><th>Minimum charge</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">USD</td><td>US Dollar</td><td>2</td><td>$10.00</td><td>50 ($0.50)</td></tr>
+    <tr><td class="field-name">EUR</td><td>Euro</td><td>2</td><td>€10.00</td><td>50 (€0.50)</td></tr>
+    <tr><td class="field-name">GBP</td><td>Pound Sterling</td><td>2</td><td>£10.00</td><td>30 (£0.30)</td></tr>
+    <tr><td class="field-name">CAD</td><td>Canadian Dollar</td><td>2</td><td>$10.00</td><td>50</td></tr>
+    <tr><td class="field-name">AUD</td><td>Australian Dollar</td><td>2</td><td>$10.00</td><td>50</td></tr>
+    <tr><td class="field-name">JPY</td><td>Japanese Yen</td><td><strong>0</strong></td><td>¥1000</td><td>50 (¥50)</td></tr>
+    <tr><td class="field-name">CHF</td><td>Swiss Franc</td><td>2</td><td>CHF 10.00</td><td>50</td></tr>
+    <tr><td class="field-name">MXN</td><td>Mexican Peso</td><td>2</td><td>$10.00</td><td>1000 ($10)</td></tr>
+    <tr><td class="field-name">BRL</td><td>Brazilian Real</td><td>2</td><td>R$10.00</td><td>50</td></tr>
+    <tr><td class="field-name">INR</td><td>Indian Rupee</td><td>2</td><td>₹10.00</td><td>50</td></tr>
+    <tr><td class="field-name">SGD</td><td>Singapore Dollar</td><td>2</td><td>$10.00</td><td>50</td></tr>
+    <tr><td class="field-name">HKD</td><td>Hong Kong Dollar</td><td>2</td><td>$10.00</td><td>400 ($4)</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout warning">
+  <span class="callout-title">Zero-decimal currencies</span>
+  <p>For JPY, the integer <em>is</em> the yen amount — never multiply or divide by 100.
+  Currency codes are case-insensitive on input and normalized to uppercase.</p>
+</div>
+
+<h2>Other conventions</h2>
+<ul>
+  <li><strong>Timestamps</strong> are RFC 3339 / ISO 8601 UTC strings
+    (<code>"2026-06-11T12:00:00Z"</code>); request fields like <code>trial_end</code> use the
+    same format.</li>
+  <li><strong>Metadata</strong> fields accept any JSON object (≈ key-value tags) and are stored
+    and returned verbatim. Don't put secrets or card data in them.</li>
+  <li><strong>Deletes are soft</strong> — <code>DELETE</code> returns <code>204</code> and the
+    resource stops appearing, but financial history is preserved internally.</li>
+  <li><strong>CORS</strong>: browsers may call the API only from origins on the operator's
+    allowlist (<code>ALLOWED_ORIGINS</code>); allowed request headers are
+    <code>Authorization</code>, <code>Content-Type</code>, <code>Idempotency-Key</code>.</li>
+  <li><strong>Security headers</strong>: every response carries
+    <code>X-Content-Type-Options: nosniff</code> and <code>X-Frame-Options: DENY</code>.</li>
+  <li><strong>Request bodies</strong> are capped at 1 MiB.</li>
+</ul>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

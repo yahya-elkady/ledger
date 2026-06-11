@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Overview · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">Introduction</div>
+<h1>Ledger API</h1>
+<p class="lead">
+  A Stripe-like payments REST API. It takes card charges and ACH bank transfers, runs
+  subscriptions, pays out to bank accounts, and notifies you of every state change via signed
+  webhooks — behind one consistent, multi-tenant JSON interface that wraps Stripe and Plaid.
+</p>
+
+<div class="badge-row">
+  <span class="pill">REST · JSON</span>
+  <span class="pill mode">test / live modes</span>
+  <span class="pill auth">API keys + JWT</span>
+  <span class="pill">Idempotent writes</span>
+  <span class="pill">Signed webhooks</span>
+</div>
+
+<h2>Base URL</h2>
+<pre><code>http://localhost:8080/v1        # local development (default port 8080)
+https://api.example.com/v1      # production, TLS terminated at your proxy</code></pre>
+<p>
+  All requests and responses are JSON (<code>Content-Type: application/json</code>).
+  Request bodies are capped at <strong>1&nbsp;MiB</strong>, and unknown JSON fields are
+  rejected with a <code>validation_error</code> — typos never pass silently.
+</p>
+
+<h2>Two ways to authenticate</h2>
+<ul>
+  <li><strong>API keys</strong> — for server-to-server integrations. Send
+    <code>Authorization: Bearer sk_test_…</code> (or <code>sk_live_…</code>). Keys carry a
+    scope (<code>read</code> &lt; <code>write</code> &lt; <code>admin</code>) and a mode
+    (<code>test</code> / <code>live</code>).</li>
+  <li><strong>JWT bearer tokens</strong> — for dashboard users (humans). Obtained from
+    <code>POST /v1/auth/register</code> or <code>/v1/auth/login</code>; short-lived access
+    tokens with rotating refresh tokens.</li>
+</ul>
+<p>See <a href="authentication.html">Authentication &amp; Modes</a> for the full rules.</p>
+
+<h2>Five things to know</h2>
+<ol>
+  <li><strong>Amounts are integer minor units.</strong> <code>1099</code> means $10.99 (USD) — and
+    <code>1099</code> means ¥1099 for zero-decimal JPY. Floats are never used.
+    12 ISO 4217 currencies are supported (<a href="errors.html#currencies">list</a>).</li>
+  <li><strong>Test and live mode never mix.</strong> Every credential carries a mode; a
+    test key cannot see live data (it gets 404), and live processor credentials are never
+    used for a test request.</li>
+  <li><strong>Every authenticated <code>POST</code> needs an <code>Idempotency-Key</code> header.</strong>
+    Retries replay the original response instead of charging twice
+    (<a href="errors.html#idempotency">details</a>).</li>
+  <li><strong>Responses are rate-limited per identity</strong> with
+    <code>X-RateLimit-*</code> headers on every response and <code>429</code> +
+    <code>Retry-After</code> when exceeded.</li>
+  <li><strong>State changes push webhooks.</strong> Charges, payouts, and subscriptions emit
+    signed events to your registered endpoints, with retries
+    (<a href="webhooks.html">verification guide</a>).</li>
+</ol>
+
+<h2>Explore the API</h2>
+<div class="card-grid">
+  <a class="card" href="getting-started.html">
+    <div class="card-title">🚀 Getting Started</div>
+    <div class="card-desc">Register, mint a key, take your first test charge in five steps.</div>
+  </a>
+  <a class="card" href="customers.html">
+    <div class="card-title">👤 Customers</div>
+    <div class="card-desc">Create and manage the people you charge.</div>
+  </a>
+  <a class="card" href="charges.html">
+    <div class="card-title">💳 Charges</div>
+    <div class="card-desc">One-time card payments and ACH transfers, with refunds.</div>
+  </a>
+  <a class="card" href="plans.html">
+    <div class="card-title">📋 Plans</div>
+    <div class="card-desc">Recurring prices to subscribe customers to.</div>
+  </a>
+  <a class="card" href="subscriptions.html">
+    <div class="card-title">🔁 Subscriptions</div>
+    <div class="card-desc">Recurring billing with trials and cancellation.</div>
+  </a>
+  <a class="card" href="bank-accounts.html">
+    <div class="card-title">🏦 Bank Accounts</div>
+    <div class="card-desc">Payout destinations for your funds.</div>
+  </a>
+  <a class="card" href="payouts.html">
+    <div class="card-title">💸 Payouts</div>
+    <div class="card-desc">Move money to your bank account.</div>
+  </a>
+  <a class="card" href="apikeys.html">
+    <div class="card-title">🔑 API Keys</div>
+    <div class="card-desc">Mint, list, and revoke scoped machine credentials.</div>
+  </a>
+  <a class="card" href="dashboard.html">
+    <div class="card-title">📊 Dashboard</div>
+    <div class="card-desc">Aggregates and a unified transaction feed.</div>
+  </a>
+  <a class="card" href="webhooks.html">
+    <div class="card-title">📡 Webhooks</div>
+    <div class="card-desc">Receive signed events; verify signatures correctly.</div>
+  </a>
+  <a class="card" href="errors.html">
+    <div class="card-title">⚠️ Errors &amp; Conventions</div>
+    <div class="card-desc">Error envelope, codes, pagination, rate limits, currencies.</div>
+  </a>
+  <a class="card" href="dev-setup.html">
+    <div class="card-title">🛠 Deployment &amp; Setup</div>
+    <div class="card-desc">Host it, configure .env, and ideas for apps to build.</div>
+  </a>
+</div>
+
+<h2>Complete endpoint map</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Endpoint</th><th>Auth</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST /v1/auth/register</code></td><td>none <span class="pill muted">10/min/IP</span></td><td>Create a merchant account, returns tokens</td></tr>
+    <tr><td><code>POST /v1/auth/login</code></td><td>none <span class="pill muted">10/min/IP</span></td><td>Sign in, returns tokens</td></tr>
+    <tr><td><code>POST /v1/auth/refresh</code></td><td>refresh token</td><td>Rotate the refresh token, new token pair</td></tr>
+    <tr><td><code>POST /v1/auth/logout</code></td><td>JWT</td><td>Revoke a refresh token</td></tr>
+    <tr><td><code>POST · GET /v1/apikeys</code>, <code>GET · DELETE /v1/apikeys/{id}</code></td><td>JWT</td><td>Manage API keys (plaintext shown once)</td></tr>
+    <tr><td><code>POST · GET /v1/customers</code>, <code>GET · PUT · DELETE /v1/customers/{id}</code></td><td>API key (write) or JWT</td><td>Customer CRUD</td></tr>
+    <tr><td><code>POST · GET /v1/charges</code>, <code>GET /v1/charges/{id}</code>, <code>POST /v1/charges/{id}/refund</code></td><td>API key (write)</td><td>Payments and refunds</td></tr>
+    <tr><td><code>POST · GET /v1/plans</code>, <code>DELETE /v1/plans/{id}</code></td><td>API key (write)</td><td>Recurring prices</td></tr>
+    <tr><td><code>POST · GET /v1/subscriptions</code>, <code>GET /v1/subscriptions/{id}</code>, <code>POST /v1/subscriptions/{id}/cancel</code></td><td>API key (write)</td><td>Recurring billing</td></tr>
+    <tr><td><code>POST · GET /v1/bank-accounts</code>, <code>DELETE /v1/bank-accounts/{id}</code></td><td>API key (admin)</td><td>Payout destinations</td></tr>
+    <tr><td><code>POST · GET /v1/payouts</code>, <code>GET /v1/payouts/{id}</code></td><td>API key (admin)</td><td>Transfers to your bank</td></tr>
+    <tr><td><code>POST /v1/webhooks/stripe</code>, <code>POST /v1/webhooks/plaid</code></td><td>signature</td><td>Inbound processor events</td></tr>
+    <tr><td><code>GET /v1/dashboard/overview</code>, <code>GET /v1/dashboard/transactions</code></td><td>JWT</td><td>Aggregates &amp; transaction feed</td></tr>
+    <tr><td><code>GET /health</code></td><td>none</td><td>Liveness: <code>{"status","db","redis"}</code></td></tr>
+    <tr><td><code>GET /metrics</code></td><td>none*</td><td>Prometheus metrics (*restrict at the proxy in production)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout security">
+  <span class="callout-title">PCI scope</span>
+  <p>This API never stores card numbers, CVVs, or bank credentials. Charges and subscriptions
+  reference processor-tokenized payment methods (e.g. Stripe <code>pm_…</code> ids produced by
+  client-side tokenization such as Stripe Elements), keeping your integration in SAQ-A territory.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Getting Started · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">Introduction</div>
+<h1>Getting Started</h1>
+<p class="lead">
+  From zero to a test charge in five requests. You need a running instance
+  (see <a href="dev-setup.html">Deployment &amp; Setup</a> — <code>docker compose up --build</code>
+  is the quickest path) and <code>curl</code> or any HTTP client.
+</p>
+
+<div class="callout tip">
+  <span class="callout-title">Check it's alive first</span>
+  <p><code>curl http://localhost:8080/health</code> should return
+  <code>{"status":"ok","db":"ok","redis":"ok"}</code>.</p>
+</div>
+
+<ol class="steps">
+<li>
+  <h3>Register a merchant account</h3>
+  <p>New merchants start in <strong>test mode</strong>. The response contains your dashboard
+  JWT tokens and merchant record.</p>
+<pre><code>curl -X POST http://localhost:8080/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "you@example.com",
+    "password": "a-strong-password",
+    "business_name": "Acme Store"
+  }'</code></pre>
+  <p class="code-label">Response · 201</p>
+<pre><code>{
+  "access_token":  "eyJhbGciOi...",
+  "refresh_token": "eyJhbGciOi...",
+  "token_type":    "Bearer",
+  "expires_in":    900,
+  "merchant": { "id": "…", "email": "you@example.com", "business_name": "Acme Store", "mode": "test", ... }
+}</code></pre>
+  <p>Password must be at least 8 characters. The access token lasts 15 minutes —
+  use <code>POST /v1/auth/refresh</code> to rotate (see
+  <a href="authentication.html">Authentication</a>).</p>
+</li>
+
+<li>
+  <h3>Create an API key</h3>
+  <p>API keys are managed with your <strong>JWT</strong>, and creating one is a <code>POST</code>,
+  so it needs an <code>Idempotency-Key</code> header (any unique string; a UUID is ideal).</p>
+<pre><code>curl -X POST http://localhost:8080/v1/apikeys \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "name": "backend server",
+    "type": "secret",
+    "mode": "test",
+    "scope": ["admin"]
+  }'</code></pre>
+  <p class="code-label">Response · 201</p>
+<pre><code>{
+  "id": "…",
+  "name": "backend server",
+  "key_prefix": "sk_test_4fzN",
+  "type": "secret",
+  "mode": "test",
+  "scope": ["admin"],
+  "created_at": "2026-06-11T12:00:00Z",
+  "key": "sk_test_4fzN…"        ← shown ONCE — store it now, it is never retrievable again
+}</code></pre>
+  <div class="callout warning">
+    <span class="callout-title">Save the key</span>
+    <p>Only an HMAC hash is stored server-side. If you lose the plaintext, revoke the key and
+    mint a new one.</p>
+  </div>
+</li>
+
+<li>
+  <h3>Create a customer</h3>
+<pre><code>curl -X POST http://localhost:8080/v1/customers \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "email": "jane@example.com",
+    "name": "Jane Doe",
+    "metadata": {"internal_ref": "cust-42"}
+  }'</code></pre>
+  <p>Returns <code>201</code> with the customer object; keep the <code>id</code> for the charge.</p>
+</li>
+
+<li>
+  <h3>Take a test charge</h3>
+  <p>Amounts are <strong>integer minor units</strong> — <code>2500</code> is $25.00.
+  The payment method id is a processor token (e.g. Stripe's test token
+  <code>pm_card_visa</code>); raw card numbers never touch this API.</p>
+<pre><code>curl -X POST http://localhost:8080/v1/charges \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "amount": 2500,
+    "currency": "USD",
+    "customer_id": "&lt;customer id&gt;",
+    "payment_method_id": "pm_card_visa",
+    "processor": "stripe",
+    "description": "First test charge"
+  }'</code></pre>
+  <p class="code-label">Response · 201</p>
+<pre><code>{
+  "id": "…",
+  "amount": 2500,
+  "currency": "USD",
+  "status": "succeeded",
+  "processor": "stripe",
+  "mode": "test",
+  "refunded_amount": 0,
+  ...
+}</code></pre>
+  <p>A declined card also returns <code>201</code> — as a <em>recorded</em> charge with
+  <code>"status": "failed"</code> plus <code>failure_code</code> / <code>failure_message</code>.
+  Retrying with the same <code>Idempotency-Key</code> replays this exact response instead of
+  charging again.</p>
+</li>
+
+<li>
+  <h3>See the result</h3>
+  <p>List charges with your API key, or pull dashboard aggregates with your JWT:</p>
+<pre><code>curl http://localhost:8080/v1/charges?limit=10 \
+  -H "Authorization: Bearer sk_test_..."
+
+curl http://localhost:8080/v1/dashboard/overview \
+  -H "Authorization: Bearer $ACCESS_TOKEN"</code></pre>
+</li>
+</ol>
+
+<h2>Where to go next</h2>
+<ul>
+  <li><a href="plans.html">Plans</a> + <a href="subscriptions.html">Subscriptions</a> — recurring billing.</li>
+  <li><a href="bank-accounts.html">Bank Accounts</a> + <a href="payouts.html">Payouts</a> — move money out (requires an <code>admin</code>-scope key).</li>
+  <li><a href="webhooks.html">Webhooks</a> — get notified when charges settle, payouts pay, subscriptions cancel.</li>
+  <li><a href="errors.html">Errors &amp; Conventions</a> — the error envelope, pagination, rate limits.</li>
+</ul>
+
+<div class="callout note">
+  <span class="callout-title">Seed fixtures instead</span>
+  <p>Running locally without Docker? <code>make seed-test</code> creates a test merchant,
+  an API key (plaintext printed once to the console), a customer, and sample charges in one go.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Authentication &amp; Modes · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">Core Concepts</div>
+<h1>Authentication &amp; Modes</h1>
+<p class="lead">
+  Machine clients use scoped <strong>API keys</strong>; dashboard users use <strong>JWT</strong>
+  access + refresh tokens. Every credential carries a <code>test</code> or <code>live</code> mode
+  that isolates its data. All credentials travel in the same header:
+</p>
+<pre><code>Authorization: Bearer &lt;api key or access token&gt;</code></pre>
+
+<h2>API keys</h2>
+<p>Format: <code>&lt;sk|pk&gt;_&lt;test|live&gt;_&lt;base58 random&gt;</code> — e.g.
+<code>sk_test_4fzN…</code>. The prefix tells you everything at a glance:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Prefix</th><th>Type</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td><code>sk_test_</code> / <code>sk_live_</code></td><td>secret</td><td>Server-side. Full API access up to its scope. Never expose in a browser or mobile app.</td></tr>
+    <tr><td><code>pk_test_</code> / <code>pk_live_</code></td><td>publishable</td><td>Client-side identifiers (e.g. pairing with processor tokenization). Give them minimal scope.</td></tr>
+  </tbody>
+</table>
+</div>
+<ul>
+  <li>Only an <strong>HMAC-SHA256 hash</strong> is stored — the plaintext is shown once at
+    creation and can never be retrieved again.</li>
+  <li>Keys are managed via the <a href="apikeys.html">API Keys</a> endpoints (JWT required).</li>
+  <li>Revocation takes effect <strong>immediately</strong> (the server's auth cache is evicted
+    on revoke).</li>
+  <li>An unknown, revoked, or expired key gets the same opaque
+    <code>401 invalid_api_key</code> response.</li>
+</ul>
+
+<h3>Scopes</h3>
+<p>Scopes are hierarchical: <code>admin</code> ⊇ <code>write</code> ⊇ <code>read</code>.
+A key holding <code>admin</code> passes any scope check. Insufficient scope returns
+<code>403 insufficient_scope</code>.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Resource group</th><th>Accepted credential</th><th>Minimum scope</th></tr></thead>
+  <tbody>
+    <tr><td><a href="customers.html">Customers</a></td><td>API key <em>or</em> JWT</td><td><span class="pill scope">write</span></td></tr>
+    <tr><td><a href="charges.html">Charges</a></td><td>API key</td><td><span class="pill scope">write</span></td></tr>
+    <tr><td><a href="plans.html">Plans</a></td><td>API key</td><td><span class="pill scope">write</span></td></tr>
+    <tr><td><a href="subscriptions.html">Subscriptions</a></td><td>API key</td><td><span class="pill scope">write</span></td></tr>
+    <tr><td><a href="bank-accounts.html">Bank Accounts</a></td><td>API key</td><td><span class="pill scope">admin</span></td></tr>
+    <tr><td><a href="payouts.html">Payouts</a></td><td>API key</td><td><span class="pill scope">admin</span></td></tr>
+    <tr><td><a href="apikeys.html">API Keys</a></td><td>JWT only</td><td>—</td></tr>
+    <tr><td><a href="dashboard.html">Dashboard</a></td><td>JWT only</td><td>—</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout note">
+  <span class="callout-title">Scope applies to the whole group</span>
+  <p>The minimum scope guards every method in the group, including <code>GET</code>s — e.g.
+  listing charges requires a <code>write</code>-scoped key. Dashboard JWTs carry
+  <code>admin</code> scope over the merchant's own account, which is why a JWT also works on
+  the Customers endpoints.</p>
+</div>
+
+<h2>Dashboard JWTs</h2>
+<p>Humans sign in once and hold two tokens: a short-lived <strong>access token</strong>
+(default 15 minutes) sent on every request, and a long-lived <strong>refresh token</strong>
+(default 30 days) used only to mint the next pair. Refresh tokens are single-use — each refresh
+<em>rotates</em> the token, and presenting an already-used one is rejected (a theft signal).</p>
+
+<h3 class="anchor-h" id="register">Register</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/auth/register</span></div>
+<div class="meta-row"><span class="pill auth">no auth</span><span class="pill muted">rate limit: 10/min per IP</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">email</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Must look like an email; lower-cased and trimmed. Unique — duplicate returns <code>409</code>.</td></tr>
+    <tr><td class="field-name">password</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Min 8 characters. Stored bcrypt-hashed only.</td></tr>
+    <tr><td class="field-name">business_name</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Display name for the merchant.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>201</code> with a token bundle (plus the merchant object). New
+merchants start in <code>test</code> mode.</p>
+<pre><code>{
+  "access_token":  "eyJ…",
+  "refresh_token": "eyJ…",
+  "token_type":    "Bearer",
+  "expires_in":    900,
+  "merchant":      { "id": "…", "email": "…", "business_name": "…", "mode": "test", "created_at": "…", "updated_at": "…" }
+}</code></pre>
+
+<h3 class="anchor-h" id="login">Login</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/auth/login</span></div>
+<div class="meta-row"><span class="pill auth">no auth</span><span class="pill muted">rate limit: 10/min per IP</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">email</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td></td></tr>
+    <tr><td class="field-name">password</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td></td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with the same token bundle (without the merchant
+object). Wrong email and wrong password produce the <em>same</em> generic
+<code>401</code> — the API can't be used to enumerate registered emails.</p>
+
+<h3 class="anchor-h" id="refresh">Refresh (rotate)</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/auth/refresh</span></div>
+<div class="meta-row"><span class="pill auth">no auth header — the body carries the credential</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">refresh_token</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>The current refresh token.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with a brand-new access + refresh pair. The old
+refresh token is revoked atomically in the same step. Reusing a rotated token returns
+<code>401</code> — if your client sees this unexpectedly, treat the session as compromised and
+re-login.</p>
+
+<h3 class="anchor-h" id="logout">Logout</h3>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/auth/logout</span></div>
+<div class="meta-row"><span class="pill auth">JWT</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">refresh_token</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>The refresh token to revoke.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>204</code> always — logout is idempotent, even for unknown or
+already-revoked tokens. The short-lived access token simply expires on its own.</p>
+
+<h3>Token expiry in practice</h3>
+<ul>
+  <li>An expired access token returns <code>401</code> with code <code>token_expired</code> —
+    your cue to call <code>/v1/auth/refresh</code> and retry.</li>
+  <li>Any other invalid token returns <code>401 authentication_required</code>.</li>
+</ul>
+
+<h2 class="anchor-h" id="modes">Test vs live mode</h2>
+<p>Every API key and JWT carries a mode. Mode-bearing data — charges, plans, subscriptions,
+payouts — is filtered by it on every query:</p>
+<ul>
+  <li>A test-mode credential <strong>cannot read or touch live data</strong> (you get
+    <code>404</code>, as if it didn't exist) and vice versa.</li>
+  <li>Processor credentials are selected per request: a test request uses Stripe test keys /
+    Plaid sandbox, a live request uses live keys. They never cross.</li>
+  <li>Test mode has a lower rate limit (default 100 req/min vs 1000 for live; see
+    <a href="errors.html#rate-limits">rate limits</a>).</li>
+  <li>Customers and bank accounts are merchant-scoped but not mode-scoped — the same customer
+    record is visible from both modes.</li>
+</ul>
+<div class="callout tip">
+  <span class="callout-title">Develop in test, switch by swapping the key</span>
+  <p>Build your integration with an <code>sk_test_…</code> key, then deploy with an
+  <code>sk_live_…</code> key. No code change is needed — the credential decides everything.</p>
+</div>
+
+<div class="callout security">
+  <span class="callout-title">Credential hygiene</span>
+  <p>Secret keys and tokens are never logged by the service, and authentication failures are
+  answered with deliberately vague messages. On your side: keep <code>sk_</code> keys out of
+  client code and version control, scope keys minimally (e.g. <code>read</code> for analytics
+  jobs), and revoke anything you suspect leaked — revocation is immediate.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

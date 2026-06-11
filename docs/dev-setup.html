@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Deployment &amp; Setup · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">Operations</div>
+<h1>Deployment &amp; Setup</h1>
+<p class="lead">
+  For developers running the service: how to host it, every <code>.env</code> variable
+  explained, what to check before production — and ideas for what to build on top.
+</p>
+
+<h2>The stack</h2>
+<p>One Go binary plus two backing services:</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Component</th><th>Used for</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr><td><strong>PostgreSQL</strong></td><td>All persistent data (merchants, charges, ledger, audit log)</td><td>16</td></tr>
+    <tr><td><strong>Redis</strong></td><td>Rate limiting, idempotency cache, API-key auth cache — safe to lose on restart</td><td>7</td></tr>
+    <tr><td><strong>Go</strong></td><td>Building/running the server (skip if using Docker)</td><td>1.26</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Stripe and Plaid accounts are <strong>optional in development</strong> — the server boots
+without their keys; only the routes that reach the processor need them.</p>
+
+<h2>Option A — Docker Compose (recommended)</h2>
+<ol class="steps">
+  <li>
+    <h3>Configure</h3>
+<pre><code>cp .env.example .env
+# then edit .env: set the four *_SECRET values (each ≥ 32 chars, and the two JWT
+# secrets must differ). Generate strong values, e.g.:
+#   openssl rand -base64 48</code></pre>
+  </li>
+  <li>
+    <h3>Launch</h3>
+<pre><code>docker compose up --build</code></pre>
+    <p>This starts four services in order: <code>postgres</code> (provisions least-privilege DB
+    roles on first init) → <code>migrate</code> (one-shot job that applies
+    <code>migrations/*.sql</code> as the DDL-owning <code>payments_migrations</code> role,
+    tracked in <code>schema_migrations</code> so re-runs are no-ops) → <code>redis</code> →
+    <code>api</code> (only after migrations finish).</p>
+  </li>
+  <li>
+    <h3>Verify</h3>
+<pre><code>curl http://localhost:8080/health
+# → {"status":"ok","db":"ok","redis":"ok"}</code></pre>
+    <p>Tear down with <code>docker compose down</code> (add <code>-v</code> to wipe the database
+    volume).</p>
+  </li>
+</ol>
+<p>The API image is a multi-stage build producing a static binary in a
+<strong>distroless, non-root</strong> image (no shell, no package manager). The app connects to
+Postgres as <code>payments_app</code>, a role with <em>no DDL rights</em> — schema changes can
+only happen through the migration job.</p>
+
+<h2>Option B — local toolchain</h2>
+<p>With Postgres and Redis already running locally:</p>
+<pre><code>cp .env.example .env          # set DATABASE_URL, REDIS_URL, and the secrets
+make migrate-up               # apply migrations (golang-migrate CLI)
+make run                      # start the server on :8080
+make seed-test                # optional: test merchant + API key + sample data</code></pre>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Make target</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>make run</code></td><td>Run the HTTP server (<code>go run ./cmd/server</code>).</td></tr>
+    <tr><td><code>make build</code></td><td>Build the binary into <code>./bin/server</code>.</td></tr>
+    <tr><td><code>make test</code></td><td>Unit suite — no Docker, no network (fakes + miniredis).</td></tr>
+    <tr><td><code>make test-integration</code></td><td>End-to-end suite against throwaway Postgres+Redis containers (needs Docker).</td></tr>
+    <tr><td><code>make migrate-up</code> / <code>migrate-down</code></td><td>Apply / roll back SQL migrations.</td></tr>
+    <tr><td><code>make seed-test</code></td><td>Seed test-mode fixtures; prints an API key plaintext once.</td></tr>
+    <tr><td><code>make generate</code></td><td>Regenerate sqlc query code after editing SQL.</td></tr>
+    <tr><td><code>make lint</code> / <code>make tidy</code></td><td>golangci-lint / go.mod hygiene.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 class="anchor-h" id="env">Environment reference (.env)</h2>
+<p>Configuration is 100% environment-driven (a local <code>.env</code> is read in development;
+production should inject real environment variables). The process <strong>fails fast at
+startup</strong> if a required value is missing or a secret is too short — it never boots
+half-configured.</p>
+
+<h3>Server</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">PORT</td><td><code>8080</code></td><td>HTTP listen port.</td></tr>
+    <tr><td class="field-name">ENV</td><td><code>development</code></td><td><code>development</code> | <code>production</code>. Production enables extra safety checks (see below).</td></tr>
+    <tr><td class="field-name">LOG_LEVEL</td><td><code>info</code></td><td><code>debug</code> | <code>info</code> | <code>warn</code> | <code>error</code>. Structured JSON logs (zerolog), one line per request.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Database &amp; Redis</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">DATABASE_URL</td><td><span class="pill req">required</span></td><td>Postgres DSN. Connect as the least-privilege <code>payments_app</code> role, never a superuser. <code>sslmode=require</code> in production — the server <strong>refuses to start</strong> with <code>sslmode=disable</code> when <code>ENV=production</code>.</td></tr>
+    <tr><td class="field-name">DATABASE_MAX_CONNS</td><td><code>25</code></td><td>Connection pool ceiling.</td></tr>
+    <tr><td class="field-name">DATABASE_MIN_CONNS</td><td><code>5</code></td><td>Pool floor (kept warm).</td></tr>
+    <tr><td class="field-name">REDIS_URL</td><td><code>redis://localhost:6379</code></td><td>Rate limits + idempotency + auth cache. If Redis goes down, rate limiting <em>fails open</em> (requests pass) rather than taking the API down.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Secrets <span class="pill req">all required, ≥ 32 chars</span></h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">JWT_ACCESS_SECRET</td><td>Signs dashboard access tokens.</td></tr>
+    <tr><td class="field-name">JWT_REFRESH_SECRET</td><td>Signs refresh tokens. <strong>Must differ</strong> from the access secret — startup fails if equal.</td></tr>
+    <tr><td class="field-name">API_KEY_HMAC_SECRET</td><td>HMAC-SHA256 secret for hashing API keys at rest. Rotating it invalidates <em>every existing key</em> — plan key re-issuance.</td></tr>
+    <tr><td class="field-name">WEBHOOK_SIGNING_SECRET</td><td>Master secret from which per-endpoint webhook secrets are derived. Rotating it invalidates all endpoint secrets.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>JWT lifetimes</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">JWT_ACCESS_TTL_MINUTES</td><td><code>15</code></td><td>Access-token life; clients refresh after this.</td></tr>
+    <tr><td class="field-name">JWT_REFRESH_TTL_DAYS</td><td><code>30</code></td><td>Refresh-token life; effectively "stay signed in" duration.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Processors (optional in development)</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">STRIPE_SECRET_KEY_TEST / STRIPE_SECRET_KEY_LIVE</td><td>Mode-matched Stripe keys — a live request only ever uses the live key, test only test.</td></tr>
+    <tr><td class="field-name">STRIPE_WEBHOOK_SECRET</td><td><code>whsec_…</code> from the Stripe dashboard; verifies inbound <code>/v1/webhooks/stripe</code> events.</td></tr>
+    <tr><td class="field-name">PLAID_CLIENT_ID</td><td>Plaid client id.</td></tr>
+    <tr><td class="field-name">PLAID_SECRET_SANDBOX / PLAID_SECRET_LIVE</td><td>Mode-matched Plaid secrets.</td></tr>
+    <tr><td class="field-name">PLAID_ENV</td><td><code>sandbox</code> (default) | <code>development</code> | <code>production</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Webhook delivery</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">WEBHOOK_DELIVERY_RETRIES</td><td><code>5</code></td><td>Total attempts before a delivery is dead-lettered.</td></tr>
+    <tr><td class="field-name">WEBHOOK_RETRY_BACKOFF_SECONDS</td><td><code>60</code></td><td>Backoff base: delay = base × 2^attempt.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Rate limits &amp; HTTP</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Default</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">RATE_LIMIT_LIVE_RPM</td><td><code>1000</code></td><td>Per live API key, per minute.</td></tr>
+    <tr><td class="field-name">RATE_LIMIT_TEST_RPM</td><td><code>100</code></td><td>Per test API key, per minute.</td></tr>
+    <tr><td class="field-name">RATE_LIMIT_DASHBOARD_RPM</td><td><code>300</code></td><td>Per merchant for JWT traffic. (Register/login are fixed at 10/min per IP.)</td></tr>
+    <tr><td class="field-name">ALLOWED_ORIGINS</td><td><em>empty</em></td><td>Comma-separated CORS allowlist for your dashboard frontend, e.g. <code>https://dash.example.com</code>. Empty = no browser origins allowed (server-to-server still works).</td></tr>
+    <tr><td class="field-name">TRUST_PROXY_HEADERS</td><td><code>false</code></td><td>Set <code>true</code> ONLY behind a proxy/LB that always appends the real client IP to <code>X-Forwarded-For</code> — the rightmost hop is used. With no proxy, leave <code>false</code> or clients can spoof their IP (rate-limit evasion, polluted audit logs).</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Docker Compose only</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Variable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">POSTGRES_SUPERUSER_PASSWORD</td><td>Superuser password — used only by the first-boot init script that provisions the roles.</td></tr>
+    <tr><td class="field-name">PAYMENTS_APP_PASSWORD</td><td>Password for the app's <code>payments_app</code> role (no DDL).</td></tr>
+    <tr><td class="field-name">PAYMENTS_MIGRATIONS_PASSWORD</td><td>Password for the <code>payments_migrations</code> role (owns DDL).</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Production checklist</h2>
+<ul>
+  <li><strong>TLS at a reverse proxy</strong> (nginx/Caddy/ALB) — the app deliberately speaks
+    plain HTTP internally. Set <code>TRUST_PROXY_HEADERS=true</code> once behind it.</li>
+  <li><strong>Restrict <code>/metrics</code></strong> at the proxy or network layer — it's
+    unauthenticated by design (Prometheus scrape) and must not be public.</li>
+  <li><strong><code>ENV=production</code></strong> — enforces TLS-to-Postgres and disables
+    dev conveniences.</li>
+  <li><strong>Secrets from a manager</strong> (Vault, AWS/GCP secrets, …) injected as env vars.
+    Never commit <code>.env</code> — it's gitignored for a reason.</li>
+  <li><strong>Run migrations as a deploy step</strong> (the compose <code>migrate</code> job
+    pattern), not from the app — the app role can't run DDL.</li>
+  <li><strong>Point processor webhooks</strong> at <code>/v1/webhooks/stripe</code> and
+    <code>/v1/webhooks/plaid</code> and set the verification secrets — without them, async
+    settlement (ACH charges, payouts) never updates.</li>
+  <li><strong>Set <code>ALLOWED_ORIGINS</code></strong> to exactly your dashboard origin(s).</li>
+  <li><strong>Scrape <code>/metrics</code> and ship logs.</strong> Every request logs one JSON
+    line carrying <code>request_id</code> (the same id returned in error envelopes); metrics
+    cover request latency, charge volume, rate-limit hits, and webhook delivery outcomes.</li>
+</ul>
+
+<h2>What can you build on this API?</h2>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">🖥 Merchant dashboard</div>
+    <div class="card-desc">A React/Vue SPA: register &amp; login (JWT), revenue charts from
+      <code>/dashboard/overview</code>, transaction feed, API-key management, customer CRUD.
+      Everything it needs accepts JWTs — no secret keys in the browser.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">🛒 E-commerce checkout</div>
+    <div class="card-desc">Your store backend tokenizes the card client-side (Stripe Elements),
+      then calls <code>POST /charges</code> with a <code>write</code> key. Refund returns from the
+      same API; webhooks reconcile orders.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">📦 SaaS billing portal</div>
+    <div class="card-desc">Plans + subscriptions with trials: signup creates a customer and a
+      subscription; <code>subscription.updated</code> webhooks drive dunning/feature flags;
+      cancel-at-period-end for downgrades.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">🤝 Marketplace / gig payouts</div>
+    <div class="card-desc">Charge buyers, then pay sellers: bank accounts + payouts with an
+      <code>admin</code> key, with <code>payout.paid</code>/<code>payout.failed</code> webhooks
+      feeding a seller-facing status page.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">🎗 Donation platform</div>
+    <div class="card-desc">One-time gifts (charges, 12 currencies) and recurring giving
+      (plans + subscriptions); test mode makes demo days safe.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">📈 Ops &amp; reconciliation tools</div>
+    <div class="card-desc">Slack alerts on <code>charge.failed</code> webhooks, a Grafana board
+      on <code>/metrics</code>, nightly exports via list endpoints with a <code>read</code> key —
+      plus the append-only audit trail underneath.</div>
+  </div>
+</div>
+<p>A typical full app combines three credentials: a <strong>JWT</strong> for the human dashboard,
+a <strong><code>write</code> key</strong> for the money-in path, and an
+<strong><code>admin</code> key</strong> locked away for payouts — with a
+<a href="webhooks.html">webhook receiver</a> keeping your database in sync.</p>
+
+<h2>Day-to-day development</h2>
+<ul>
+  <li><code>make test</code> — the unit suite runs without Docker or network (store fakes +
+    in-memory Redis).</li>
+  <li><code>make test-integration</code> — spins up real Postgres + Redis containers and runs
+    the full request path end-to-end (register → key → charge → replay → 429 → mode isolation).</li>
+  <li>SQL changes: edit <code>internal/store/queries/*.sql</code>, run
+    <code>make generate</code> (sqlc), add a numbered file in <code>migrations/</code>.</li>
+  <li>The double-entry ledger demo: <code>go run ./cmd/smoke</code> writes a balanced entry set
+    against Postgres.</li>
+</ul>
+
+<div class="callout note">
+  <span class="callout-title">More operator docs in the repo</span>
+  <p><code>README.md</code> (architecture &amp; design rationale) and
+  <code>SECURITY_AUDIT.md</code> (the Phase 14 security review: findings, fixes, residual
+  risks) complement this page.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

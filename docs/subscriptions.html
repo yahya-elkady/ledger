@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Subscriptions · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">API Reference</div>
+<h1>Subscriptions</h1>
+<p class="lead">
+  A subscription bills a customer on a <a href="plans.html">plan</a>'s schedule, with optional
+  trials and immediate or end-of-period cancellation. Subscriptions are processed by Stripe.
+</p>
+<div class="meta-row">
+  <span class="pill auth">API key</span>
+  <span class="pill scope">write scope</span>
+  <span class="pill mode">mode-isolated</span>
+</div>
+
+<h2>The subscription object</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">id</td><td class="field-type">string</td><td>Unique identifier.</td></tr>
+    <tr><td class="field-name">merchant_id</td><td class="field-type">string</td><td>The owning merchant.</td></tr>
+    <tr><td class="field-name">customer_id</td><td class="field-type">string</td><td>Who is billed.</td></tr>
+    <tr><td class="field-name">plan_id</td><td class="field-type">string</td><td>The plan billed on.</td></tr>
+    <tr><td class="field-name">payment_method_id</td><td class="field-type">string</td><td>Processor token billed each cycle.</td></tr>
+    <tr><td class="field-name">status</td><td class="field-type">string</td><td>Mirrors the processor's status: <code>active</code>, <code>trialing</code>, <code>past_due</code>, <code>canceled</code>, <code>incomplete</code>, …</td></tr>
+    <tr><td class="field-name">processor_sub_id</td><td class="field-type">string</td><td>Stripe subscription id.</td></tr>
+    <tr><td class="field-name">current_period_start / current_period_end</td><td class="field-type">timestamp</td><td>The billing period now in progress.</td></tr>
+    <tr><td class="field-name">trial_end</td><td class="field-type">timestamp</td><td>When the trial ends, if any.</td></tr>
+    <tr><td class="field-name">canceled_at</td><td class="field-type">timestamp</td><td>Set on immediate cancellation.</td></tr>
+    <tr><td class="field-name">mode</td><td class="field-type">string</td><td><code>test</code> or <code>live</code>.</td></tr>
+    <tr><td class="field-name">metadata</td><td class="field-type">object</td><td>Your JSON, stored verbatim.</td></tr>
+    <tr><td class="field-name">created_at / updated_at</td><td class="field-type">timestamp</td><td>RFC 3339 UTC.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Create a subscription</h2>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/subscriptions</span></div>
+<div class="meta-row"><span class="pill req">Idempotency-Key required</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">customer_id</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>An existing customer's id.</td></tr>
+    <tr><td class="field-name">plan_id</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>An existing plan in the same mode — otherwise <code>404</code>.</td></tr>
+    <tr><td class="field-name">payment_method_id</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Processor-tokenized payment method.</td></tr>
+    <tr><td class="field-name">trial_end</td><td class="field-type">timestamp</td><td><span class="pill opt">optional</span></td><td>RFC 3339, in the future — free until then.</td></tr>
+    <tr><td class="field-name">metadata</td><td class="field-type">object</td><td><span class="pill opt">optional</span></td><td>Any JSON object.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>201</code> with the subscription (status and period dates come
+from the processor). Errors: <code>400 validation_error</code>, <code>404</code> (unknown plan),
+<code>502 processor_error</code>.</p>
+<pre><code>curl -X POST http://localhost:8080/v1/subscriptions \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "customer_id": "1f3c…",
+    "plan_id": "7e9a…",
+    "payment_method_id": "pm_card_visa",
+    "trial_end": "2026-07-01T00:00:00Z"
+  }'</code></pre>
+
+<h2>List subscriptions</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/subscriptions</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Query param</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">status</td><td><span class="pill opt">optional</span></td><td>Filter, e.g. <code>active</code>, <code>trialing</code>, <code>canceled</code>.</td></tr>
+    <tr><td class="field-name">limit</td><td><span class="pill opt">optional</span></td><td>Default 20, max 100.</td></tr>
+    <tr><td class="field-name">cursor</td><td><span class="pill opt">optional</span></td><td>From the previous <code>next_cursor</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with <code>{"data": [...], "next_cursor": "…"}</code>.</p>
+
+<h2>Retrieve a subscription</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/subscriptions/{id}</span></div>
+<p><strong>Returns</strong> <code>200</code> or <code>404 not_found</code> (also for cross-mode
+access).</p>
+
+<h2>Cancel a subscription</h2>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/subscriptions/{id}/cancel</span></div>
+<div class="meta-row"><span class="pill req">Idempotency-Key required</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">at_period_end</td><td class="field-type">bool</td><td><span class="pill opt">optional</span></td><td><code>false</code> (default): cancel <strong>now</strong> — status becomes <code>canceled</code>, <code>canceled_at</code> is set. <code>true</code>: keep serving until <code>current_period_end</code>, then cancel (status stays as-is until the period closes; the body may be omitted entirely for an immediate cancel).</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with the updated subscription. Errors:
+<code>404</code>, <code>502 processor_error</code>.</p>
+<pre><code># cancel at the end of the current billing period
+curl -X POST http://localhost:8080/v1/subscriptions/5c2e…/cancel \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"at_period_end": true}'</code></pre>
+<p><strong>Webhooks:</strong> when the processor finalizes lifecycle changes (e.g. an
+at-period-end cancellation completing, or a payment issue), you receive
+<code>subscription.canceled</code> / <code>subscription.updated</code>
+<a href="webhooks.html">events</a>.</p>
+
+<div class="callout note">
+  <span class="callout-title">Not yet available</span>
+  <p>Changing an existing subscription's plan or payment method
+  (<code>PUT /v1/subscriptions/{id}</code>) is planned but not implemented — cancel and
+  re-create instead.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

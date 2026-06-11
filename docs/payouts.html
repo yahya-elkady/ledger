@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Payouts · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">API Reference</div>
+<h1>Payouts</h1>
+<p class="lead">
+  A payout moves funds to one of your registered
+  <a href="bank-accounts.html">bank accounts</a>. Payouts start <code>pending</code> and settle
+  asynchronously — the processor's webhook advances them to <code>paid</code> or
+  <code>failed</code>.
+</p>
+<div class="meta-row">
+  <span class="pill auth">API key</span>
+  <span class="pill scope">admin scope</span>
+  <span class="pill mode">mode-isolated</span>
+</div>
+
+<h2>The payout object</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">id</td><td class="field-type">string</td><td>Unique identifier.</td></tr>
+    <tr><td class="field-name">merchant_id</td><td class="field-type">string</td><td>The owning merchant.</td></tr>
+    <tr><td class="field-name">bank_account_id</td><td class="field-type">string</td><td>Destination account.</td></tr>
+    <tr><td class="field-name">amount</td><td class="field-type">int</td><td>Minor units.</td></tr>
+    <tr><td class="field-name">currency</td><td class="field-type">string</td><td>ISO 4217, uppercase.</td></tr>
+    <tr><td class="field-name">status</td><td class="field-type">string</td><td><code>pending</code> → <code>paid</code> | <code>failed</code></td></tr>
+    <tr><td class="field-name">processor</td><td class="field-type">string</td><td>Taken from the bank account (<code>stripe</code> / <code>plaid</code>).</td></tr>
+    <tr><td class="field-name">processor_payout_id</td><td class="field-type">string</td><td>The processor's reference id.</td></tr>
+    <tr><td class="field-name">mode</td><td class="field-type">string</td><td><code>test</code> or <code>live</code>.</td></tr>
+    <tr><td class="field-name">failure_message</td><td class="field-type">string</td><td>Set if the payout fails.</td></tr>
+    <tr><td class="field-name">arrival_date</td><td class="field-type">timestamp</td><td>Estimated arrival, when the processor provides one.</td></tr>
+    <tr><td class="field-name">created_at / updated_at</td><td class="field-type">timestamp</td><td>RFC 3339 UTC.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Create a payout</h2>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/payouts</span></div>
+<div class="meta-row"><span class="pill req">Idempotency-Key required</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">amount</td><td class="field-type">int</td><td><span class="pill req">required</span></td><td>Positive integer, minor units.</td></tr>
+    <tr><td class="field-name">currency</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Supported ISO 4217 code.</td></tr>
+    <tr><td class="field-name">bank_account_id</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>Must be one of <em>your</em> registered bank accounts — otherwise <code>404</code>. The payout rides that account's processor.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>201</code> with the payout (<code>status: "pending"</code>).
+Errors: <code>400 validation_error</code>, <code>404</code> (unknown bank account),
+<code>502 processor_error</code> (nothing was initiated; retry with the same idempotency
+key).</p>
+<pre><code>curl -X POST http://localhost:8080/v1/payouts \
+  -H "Authorization: Bearer sk_test_..." \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{
+    "amount": 250000,
+    "currency": "USD",
+    "bank_account_id": "4b8f…"
+  }'</code></pre>
+
+<h2>List payouts</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/payouts</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Query param</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">limit</td><td><span class="pill opt">optional</span></td><td>Default 20, max 100.</td></tr>
+    <tr><td class="field-name">cursor</td><td><span class="pill opt">optional</span></td><td>From the previous <code>next_cursor</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>200</code> with <code>{"data": [...], "next_cursor": "…"}</code>.</p>
+
+<h2>Retrieve a payout</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/payouts/{id}</span></div>
+<p><strong>Returns</strong> <code>200</code> with the payout, or <code>404 not_found</code>
+(also for cross-mode access).</p>
+
+<h2>Tracking settlement</h2>
+<p>Don't poll. Subscribe to the <code>payout.paid</code> and <code>payout.failed</code>
+<a href="webhooks.html">webhook events</a> — the service updates the payout row and notifies
+your endpoints the moment the processor reports the outcome. A failed payout carries the reason
+in <code>failure_message</code>.</p>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

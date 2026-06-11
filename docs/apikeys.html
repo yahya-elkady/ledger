@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Keys · Ledger API</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" aria-label="Toggle navigation">☰</button>
+    <strong>Ledger API</strong>
+  </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="logo">L</span>
+        <span>Ledger API<small>Payments API · v1</small></span>
+      </div>
+      <nav class="nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Introduction</div>
+          <a href="index.html">Overview</a>
+          <a href="getting-started.html">Getting Started</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Core Concepts</div>
+          <a href="authentication.html">Authentication &amp; Modes</a>
+          <a href="errors.html">Errors &amp; Conventions</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">API Reference</div>
+          <a href="customers.html">Customers</a>
+          <a href="charges.html">Charges</a>
+          <a href="plans.html">Plans</a>
+          <a href="subscriptions.html">Subscriptions</a>
+          <a href="bank-accounts.html">Bank Accounts</a>
+          <a href="payouts.html">Payouts</a>
+          <a href="apikeys.html">API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+          <a href="webhooks.html">Webhooks</a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Operations</div>
+          <a href="dev-setup.html">Deployment &amp; Setup</a>
+        </div>
+      </nav>
+    </aside>
+    <div class="content">
+      <main class="content-inner">
+
+<div class="eyebrow">API Reference</div>
+<h1>API Keys</h1>
+<p class="lead">
+  Mint, inspect, and revoke the machine credentials your servers use. Key management is a
+  dashboard concern, so these endpoints require a <strong>JWT</strong> — an API key cannot mint
+  other API keys.
+</p>
+<div class="meta-row">
+  <span class="pill auth">JWT only</span>
+</div>
+
+<h2>The API key object</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">id</td><td class="field-type">string</td><td>Unique identifier (used to revoke).</td></tr>
+    <tr><td class="field-name">name</td><td class="field-type">string</td><td>Your label, e.g. "backend server".</td></tr>
+    <tr><td class="field-name">key_prefix</td><td class="field-type">string</td><td>First 12 characters of the plaintext (e.g. <code>sk_test_4fzN</code>) — enough to recognize a key in a list.</td></tr>
+    <tr><td class="field-name">type</td><td class="field-type">string</td><td><code>secret</code> or <code>publishable</code>.</td></tr>
+    <tr><td class="field-name">mode</td><td class="field-type">string</td><td><code>test</code> or <code>live</code>.</td></tr>
+    <tr><td class="field-name">scope</td><td class="field-type">string[]</td><td>Subset of <code>read</code> / <code>write</code> / <code>admin</code> (hierarchical — see <a href="authentication.html">scopes</a>).</td></tr>
+    <tr><td class="field-name">last_used_at</td><td class="field-type">timestamp</td><td>Present once the key has authenticated.</td></tr>
+    <tr><td class="field-name">expires_at</td><td class="field-type">timestamp</td><td>Present if the key has an expiry; expired keys stop authenticating.</td></tr>
+    <tr><td class="field-name">created_at</td><td class="field-type">timestamp</td><td>RFC 3339 UTC.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The full plaintext key appears in exactly one response: the create call, as the extra field
+<code>key</code>.</p>
+
+<h2>Create an API key</h2>
+<div class="endpoint"><span class="method post">POST</span><span class="path">/v1/apikeys</span></div>
+<div class="meta-row"><span class="pill req">Idempotency-Key required</span></div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th></th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td class="field-name">name</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td>A label you'll recognize later.</td></tr>
+    <tr><td class="field-name">type</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td><code>secret</code> (server-side) or <code>publishable</code> (client-side).</td></tr>
+    <tr><td class="field-name">mode</td><td class="field-type">string</td><td><span class="pill req">required</span></td><td><code>test</code> or <code>live</code>.</td></tr>
+    <tr><td class="field-name">scope</td><td class="field-type">string[]</td><td><span class="pill req">required</span></td><td>At least one of <code>read</code>, <code>write</code>, <code>admin</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Returns</strong> <code>201</code> with the key object <em>plus</em> the one-time
+plaintext:</p>
+<pre><code>{
+  "id": "c91d…",
+  "name": "backend server",
+  "key_prefix": "sk_test_4fzN",
+  "type": "secret",
+  "mode": "test",
+  "scope": ["write"],
+  "created_at": "2026-06-11T12:00:00Z",
+  "key": "sk_test_4fzN8q…"   ← shown once; only its HMAC hash is stored
+}</code></pre>
+<pre><code>curl -X POST http://localhost:8080/v1/apikeys \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"name": "checkout backend", "type": "secret", "mode": "test", "scope": ["write"]}'</code></pre>
+
+<h2>List API keys</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/apikeys</span></div>
+<p><strong>Returns</strong> <code>200</code> with <code>{"data": [key, …]}</code> — metadata
+only (prefix, never the key), active keys only.</p>
+
+<h2>Retrieve an API key</h2>
+<div class="endpoint"><span class="method get">GET</span><span class="path">/v1/apikeys/{id}</span></div>
+<p><strong>Returns</strong> <code>200</code> with the key's metadata, or
+<code>404 not_found</code>.</p>
+
+<h2>Revoke an API key</h2>
+<div class="endpoint"><span class="method delete">DELETE</span><span class="path">/v1/apikeys/{id}</span></div>
+<p>Revocation is <strong>immediate</strong> — the server also evicts its auth cache, so the key
+stops authenticating on the very next request, not after a cache TTL.</p>
+<p><strong>Returns</strong> <code>204</code>, or <code>404 not_found</code>.</p>
+
+<div class="callout tip">
+  <span class="callout-title">Key strategy</span>
+  <p>Mint one key per system with the smallest scope it needs: <code>read</code> for reporting
+  jobs, <code>write</code> for the checkout path, <code>admin</code> only for the service that
+  initiates payouts. Rotate by minting the replacement first, deploying it, then revoking the
+  old key — revocation is instant, so do it in that order.</p>
+</div>
+
+      </main>
+      <footer class="footer">
+        Ledger API documentation · generated from the source of truth in this repository.
+        Amounts are always integer minor units. This service never stores card or bank credentials.
+        Built by <a href="https://github.com/yahya-elkady/ledger" style="color:inherit;opacity:0.75;">Yahya Elkady</a>.
+      </footer>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var file = location.pathname.split('/').pop() || 'index.html';
+      var links = document.querySelectorAll('.nav a');
+      for (var i = 0; i < links.length; i++) {
+        if (links[i].getAttribute('href') === file) links[i].classList.add('active');
+      }
+      var toggle = document.querySelector('.menu-toggle');
+      if (toggle) toggle.addEventListener('click', function () { document.body.classList.toggle('nav-open'); });
+      document.addEventListener('click', function (e) {
+        if (document.body.classList.contains('nav-open') && e.target.classList.contains('nav-open')) {
+          document.body.classList.remove('nav-open');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
